@@ -197,7 +197,7 @@ export function calculateSevenPercentRule(entryPrice, currentPrice) {
   }
 }
 
-export function buildForecast(history) {
+export function buildForecast(history, timeframe = 'daily') {
   if (!Array.isArray(history) || history.length < 25) {
     return {
       forecast: [],
@@ -205,6 +205,7 @@ export function buildForecast(history) {
       confidenceLabel: 'Low',
       score: 0.5,
       evaluation: { rmse: null, mape: null, sampleSize: 0 },
+      horizonLabel: timeframe === 'hourly' ? 'Hour +24' : 'Day +7',
     }
   }
 
@@ -230,12 +231,19 @@ export function buildForecast(history) {
 
   const dailyDrift = normalizedSlope + maSignal * 0.35
   const forecast = []
+  const steps = timeframe === 'hourly' ? 24 : 7
+  const lookback = timeframe === 'hourly' ? 48 : 30
+  const volatilityScale = timeframe === 'hourly' ? 1.1 : 1.6
 
-  for (let day = 1; day <= 7; day += 1) {
-    const projection = lastClose * (1 + dailyDrift * day)
-    const uncertainty = lastClose * returnVolatility * Math.sqrt(day) * 1.6
+  for (let step = 1; step <= steps; step += 1) {
+    const projection = lastClose * (1 + dailyDrift * step)
+    const uncertainty = lastClose * returnVolatility * Math.sqrt(step) * volatilityScale
     const date = new Date(latestDate)
-    date.setDate(date.getDate() + day)
+    if (timeframe === 'hourly') {
+      date.setHours(date.getHours() + step)
+    } else {
+      date.setDate(date.getDate() + step)
+    }
 
     forecast.push({
       date: date.toISOString(),
@@ -249,7 +257,7 @@ export function buildForecast(history) {
   if (returnVolatility < 0.015) confidenceLabel = 'High'
   else if (returnVolatility < 0.03) confidenceLabel = 'Medium'
 
-  const evaluation = evaluateModel(closes, 30)
+  const evaluation = evaluateModel(closes, lookback)
 
   return {
     forecast,
@@ -257,5 +265,6 @@ export function buildForecast(history) {
     confidenceLabel,
     score,
     evaluation,
+    horizonLabel: timeframe === 'hourly' ? 'Hour +24' : 'Day +7',
   }
 }

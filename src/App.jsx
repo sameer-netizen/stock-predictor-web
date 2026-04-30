@@ -22,7 +22,22 @@ import {
 import './App.css'
 
 const WATCHLIST = ['AAPL', 'MSFT', 'NVDA', 'GOOGL', 'AMZN', 'TSLA']
-const POLL_INTERVAL_MS = 60_000
+const TIMEFRAMES = [
+  { key: 'daily', label: 'Daily' },
+  { key: 'hourly', label: 'Hourly' },
+]
+const QUOTE_POLL_BY_TIMEFRAME = {
+  daily: 60_000,
+  hourly: 15_000,
+}
+const HISTORY_POLL_BY_TIMEFRAME = {
+  daily: 10 * 60_000,
+  hourly: 60_000,
+}
+const INSIGHTS_POLL_BY_TIMEFRAME = {
+  daily: 15 * 60_000,
+  hourly: 5 * 60_000,
+}
 const CLIENT_ALPHA_KEY = import.meta.env.VITE_ALPHA_VANTAGE_API_KEY
 const SYMBOL_PATTERN = /^[A-Z.-]{1,10}$/
 
@@ -83,11 +98,12 @@ async function fetchQuoteWithFallback(symbol) {
   }
 }
 
-async function fetchHistoryWithFallback(symbol) {
+async function fetchHistoryWithFallback(symbol, timeframe) {
   try {
-    const data = await fetchJson(`/api/history?symbol=${encodeURIComponent(symbol)}`)
+    const data = await fetchJson(`/api/history?symbol=${encodeURIComponent(symbol)}&timeframe=${encodeURIComponent(timeframe)}`)
     return data.prices
   } catch (serverError) {
+    if (timeframe === 'hourly') throw serverError
     if (!CLIENT_ALPHA_KEY) throw serverError
 
     const data = await fetchJson(
@@ -108,6 +124,7 @@ function safeMetric(value, suffix = '') {
 
 function App() {
   const [symbol, setSymbol] = useState('AAPL')
+  const [timeframe, setTimeframe] = useState('daily')
   const [symbolInput, setSymbolInput] = useState('')
   const [customSymbols, setCustomSymbols] = useState([])
   const [symbolError, setSymbolError] = useState('')
@@ -148,6 +165,7 @@ function App() {
 
   useEffect(() => {
     let isMounted = true
+    const pollMs = QUOTE_POLL_BY_TIMEFRAME[timeframe] || QUOTE_POLL_BY_TIMEFRAME.daily
 
     const loadQuote = async () => {
       try {
@@ -166,20 +184,21 @@ function App() {
 
     setLoadingQuote(true)
     loadQuote()
-    const timer = setInterval(loadQuote, POLL_INTERVAL_MS)
+    const timer = setInterval(loadQuote, pollMs)
 
     return () => {
       isMounted = false
       clearInterval(timer)
     }
-  }, [symbol])
+  }, [symbol, timeframe])
 
   useEffect(() => {
     let isMounted = true
+    const pollMs = HISTORY_POLL_BY_TIMEFRAME[timeframe] || HISTORY_POLL_BY_TIMEFRAME.daily
 
     const loadHistory = async () => {
       try {
-        const data = await fetchHistoryWithFallback(symbol)
+        const data = await fetchHistoryWithFallback(symbol, timeframe)
         if (!isMounted) return
         setHistory(data)
         setError('')
@@ -193,14 +212,17 @@ function App() {
 
     setLoadingHistory(true)
     loadHistory()
+    const timer = setInterval(loadHistory, pollMs)
 
     return () => {
       isMounted = false
+      clearInterval(timer)
     }
-  }, [symbol])
+  }, [symbol, timeframe])
 
   useEffect(() => {
     let isMounted = true
+    const pollMs = INSIGHTS_POLL_BY_TIMEFRAME[timeframe] || INSIGHTS_POLL_BY_TIMEFRAME.daily
 
     const loadInsights = async () => {
       try {
@@ -221,20 +243,23 @@ function App() {
 
     setLoadingInsights(true)
     loadInsights()
+    const timer = setInterval(loadInsights, pollMs)
 
     return () => {
       isMounted = false
+      clearInterval(timer)
     }
-  }, [symbol])
+  }, [symbol, timeframe])
 
-  const model = useMemo(() => buildForecast(history), [history])
+  const model = useMemo(() => buildForecast(history, timeframe), [history, timeframe])
   const technical = useMemo(() => buildTechnicalSnapshot(history), [history])
   const tradingWindowHint = useMemo(() => getTradingWindowHint(), [])
   const sevenRule = useMemo(() => calculateSevenPercentRule(entryPrice, quote?.price), [entryPrice, quote])
 
   const chartData = useMemo(() => {
+    const dateFormat = timeframe === 'hourly' ? 'DD MMM HH:mm' : 'DD MMM'
     const actual = history.map((item) => ({
-      date: dayjs(item.date).format('DD MMM'),
+      date: dayjs(item.date).format(dateFormat),
       actual: item.close,
       forecast: null,
       lower: null,
@@ -242,7 +267,7 @@ function App() {
     }))
 
     const future = model.forecast.map((point) => ({
-      date: dayjs(point.date).format('DD MMM'),
+      date: dayjs(point.date).format(dateFormat),
       actual: null,
       forecast: point.value,
       lower: point.lower,
@@ -250,7 +275,7 @@ function App() {
     }))
 
     return [...actual.slice(-40), ...future]
-  }, [history, model])
+  }, [history, model, timeframe])
 
   return (
     <main className="app-shell">
@@ -259,7 +284,7 @@ function App() {
           <p className="eyebrow">Realtime + Forecast Dashboard</p>
           <h1>Stock Pulse Lab</h1>
           <p className="subtitle">
-            Track near realtime prices and estimate the next 7 sessions with a trend-plus-volatility model.
+            Track near realtime prices and switch between daily and hourly monitoring with timeframe-aware forecasts.
           </p>
         </div>
         <div>
@@ -280,6 +305,18 @@ function App() {
             />
             <button type="submit" className="symbol-search-btn">Load</button>
           </form>
+          <div className="timeframe-picker" role="tablist" aria-label="Chart timeframe">
+            {TIMEFRAMES.map((item) => (
+              <button
+                key={item.key}
+                type="button"
+                className={item.key === timeframe ? 'timeframe-btn active' : 'timeframe-btn'}
+                onClick={() => setTimeframe(item.key)}
+              >
+                {item.label}
+              </button>
+            ))}
+          </div>
           {symbolError && <p className="symbol-error">{symbolError}</p>}
 
           <div className="symbol-picker" role="tablist" aria-label="Stock symbols">
@@ -309,8 +346,8 @@ function App() {
         </article>
 
         <article className="kpi-card">
-          <p>Forecast (Day +7)</p>
-          <h2>{model.forecast[6] ? formatCurrency(model.forecast[6].value) : '...'}</h2>
+          <p>Forecast ({model.horizonLabel})</p>
+          <h2>{model.forecast.at(-1) ? formatCurrency(model.forecast.at(-1).value) : '...'}</h2>
           <span>{model.signal}</span>
         </article>
 
@@ -448,7 +485,8 @@ function App() {
             <li>Do not rely only on technical signals for long-term investing.</li>
             <li>Treat projections as probability ranges, not guarantees.</li>
           </ul>
-          <p className="panel-note">Last refresh: {lastUpdated ? dayjs(lastUpdated).format('HH:mm:ss') : '--:--:--'} (updates every 60s)</p>
+          <p className="panel-note">Last refresh: {lastUpdated ? dayjs(lastUpdated).format('HH:mm:ss') : '--:--:--'} (updates every {Math.round((QUOTE_POLL_BY_TIMEFRAME[timeframe] || 60000) / 1000)}s)</p>
+          <p className="panel-note">Active mode: {timeframe === 'hourly' ? 'Hourly (fast refresh)' : 'Daily (swing trend view)'}</p>
         </article>
       </section>
 

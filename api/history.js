@@ -1,12 +1,21 @@
 const ALPHA_BASE_URL = 'https://www.alphavantage.co/query'
 const YAHOO_BASE_URL = 'https://query1.finance.yahoo.com/v8/finance/chart'
 
+function getYahooWindow(timeframe) {
+  if (timeframe === 'hourly') {
+    return { range: '1mo', interval: '1h' }
+  }
+  return { range: '6mo', interval: '1d' }
+}
+
 export default async function handler(req, res) {
   const symbol = String(req.query.symbol || 'AAPL').toUpperCase()
+  const timeframe = String(req.query.timeframe || 'daily').toLowerCase() === 'hourly' ? 'hourly' : 'daily'
   const apiKey = process.env.ALPHA_VANTAGE_API_KEY
 
   try {
-    const yahooUrl = `${YAHOO_BASE_URL}/${encodeURIComponent(symbol)}?range=6mo&interval=1d`
+    const { range, interval } = getYahooWindow(timeframe)
+    const yahooUrl = `${YAHOO_BASE_URL}/${encodeURIComponent(symbol)}?range=${range}&interval=${interval}`
     const yahooResponse = await fetch(yahooUrl, {
       headers: { 'User-Agent': 'Mozilla/5.0' },
     })
@@ -19,7 +28,7 @@ export default async function handler(req, res) {
     if (timestamps.length > 0 && Array.isArray(quote.close)) {
       const prices = timestamps
         .map((ts, index) => ({
-          date: new Date(ts * 1000).toISOString().slice(0, 10),
+          date: new Date(ts * 1000).toISOString(),
           open: Number(quote.open?.[index] || 0),
           high: Number(quote.high?.[index] || 0),
           low: Number(quote.low?.[index] || 0),
@@ -30,9 +39,14 @@ export default async function handler(req, res) {
         .sort((a, b) => new Date(a.date) - new Date(b.date))
 
       if (prices.length > 0) {
-        res.setHeader('Cache-Control', 's-maxage=900, stale-while-revalidate=3600')
-        return res.status(200).json({ symbol, prices })
+        const cacheWindow = timeframe === 'hourly' ? 's-maxage=120, stale-while-revalidate=300' : 's-maxage=900, stale-while-revalidate=3600'
+        res.setHeader('Cache-Control', cacheWindow)
+        return res.status(200).json({ symbol, timeframe, prices })
       }
+    }
+
+    if (timeframe === 'hourly') {
+      return res.status(404).json({ error: `No hourly history found for symbol ${symbol}` })
     }
 
     if (!apiKey) {
@@ -68,7 +82,7 @@ export default async function handler(req, res) {
 
     res.setHeader('Cache-Control', 's-maxage=900, stale-while-revalidate=3600')
 
-    return res.status(200).json({ symbol, prices })
+    return res.status(200).json({ symbol, timeframe, prices })
   } catch (error) {
     return res.status(500).json({ error: error.message || 'History fetch failed' })
   }
