@@ -1,6 +1,11 @@
 const ALPHA_BASE_URL = 'https://www.alphavantage.co/query'
 const YAHOO_BASE_URL = 'https://query1.finance.yahoo.com/v8/finance/chart'
 
+function finiteOrNull(value) {
+  const numeric = Number(value)
+  return Number.isFinite(numeric) ? numeric : null
+}
+
 function getYahooWindow(timeframe) {
   if (timeframe === '5m') {
     return { range: '5d', interval: '5m' }
@@ -37,15 +42,26 @@ export default async function handler(req, res) {
 
     if (timestamps.length > 0 && Array.isArray(quote.close)) {
       const prices = timestamps
-        .map((ts, index) => ({
-          date: new Date(ts * 1000).toISOString(),
-          open: Number(quote.open?.[index] || 0),
-          high: Number(quote.high?.[index] || 0),
-          low: Number(quote.low?.[index] || 0),
-          close: Number(quote.close?.[index] || 0),
-          volume: Number(quote.volume?.[index] || 0),
-        }))
-        .filter((point) => Number.isFinite(point.close) && point.close > 0)
+        .map((ts, index) => {
+          const close = finiteOrNull(quote.close?.[index])
+          if (close === null || close <= 0) return null
+
+          const open = finiteOrNull(quote.open?.[index]) ?? close
+          const highRaw = finiteOrNull(quote.high?.[index])
+          const lowRaw = finiteOrNull(quote.low?.[index])
+          const high = highRaw ?? Math.max(open, close)
+          const low = lowRaw ?? Math.min(open, close)
+
+          return {
+            date: new Date(ts * 1000).toISOString(),
+            open,
+            high: Math.max(high, open, close),
+            low: Math.min(low, open, close),
+            close,
+            volume: Number(finiteOrNull(quote.volume?.[index]) || 0),
+          }
+        })
+        .filter(Boolean)
         .sort((a, b) => new Date(a.date) - new Date(b.date))
 
       if (prices.length > 0) {

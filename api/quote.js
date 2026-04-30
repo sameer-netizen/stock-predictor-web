@@ -1,6 +1,11 @@
 const ALPHA_BASE_URL = 'https://www.alphavantage.co/query'
 const YAHOO_BASE_URL = 'https://query1.finance.yahoo.com/v8/finance/chart'
 
+function finiteOrNull(value) {
+  const numeric = Number(value)
+  return Number.isFinite(numeric) ? numeric : null
+}
+
 export default async function handler(req, res) {
   const symbol = String(req.query.symbol || 'AAPL').toUpperCase()
   const apiKey = process.env.ALPHA_VANTAGE_API_KEY
@@ -16,23 +21,40 @@ export default async function handler(req, res) {
     const meta = result?.meta
     const timestamps = result?.timestamp || []
     const quotes = result?.indicators?.quote?.[0] || {}
-    const closes = Array.isArray(quotes.close) ? quotes.close.filter((v) => Number.isFinite(v)) : []
+    const closes = Array.isArray(quotes.close)
+      ? quotes.close.map((value) => finiteOrNull(value)).filter((value) => value !== null)
+      : []
+    const opens = Array.isArray(quotes.open)
+      ? quotes.open.map((value) => finiteOrNull(value)).filter((value) => value !== null)
+      : []
+    const highs = Array.isArray(quotes.high)
+      ? quotes.high.map((value) => finiteOrNull(value)).filter((value) => value !== null)
+      : []
+    const lows = Array.isArray(quotes.low)
+      ? quotes.low.map((value) => finiteOrNull(value)).filter((value) => value !== null)
+      : []
 
     if (meta?.regularMarketPrice && closes.length > 0) {
-      const previousClose = closes.length > 1 ? closes[closes.length - 2] : meta.previousClose
-      const change = Number(meta.regularMarketPrice) - Number(previousClose || meta.previousClose || 0)
-      const baseline = Number(previousClose || meta.previousClose || meta.regularMarketPrice)
+      const marketPrice = Number(meta.regularMarketPrice)
+      const prevFromSeries = closes.length > 1 ? closes[closes.length - 2] : null
+      const previousClose = prevFromSeries ?? finiteOrNull(meta.previousClose) ?? marketPrice
+      const open = finiteOrNull(meta.regularMarketOpen) ?? opens.at(-1) ?? previousClose
+      const high = finiteOrNull(meta.regularMarketDayHigh) ?? highs.at(-1) ?? Math.max(marketPrice, open, previousClose)
+      const low = finiteOrNull(meta.regularMarketDayLow) ?? lows.at(-1) ?? Math.min(marketPrice, open, previousClose)
+
+      const change = marketPrice - previousClose
+      const baseline = previousClose || marketPrice
       const changePercent = baseline === 0 ? 0 : (change / baseline) * 100
 
       res.setHeader('Cache-Control', 's-maxage=30, stale-while-revalidate=120')
 
       return res.status(200).json({
         symbol,
-        price: Number(meta.regularMarketPrice),
-        open: Number(meta.regularMarketOpen || 0),
-        high: Number(meta.regularMarketDayHigh || 0),
-        low: Number(meta.regularMarketDayLow || 0),
-        previousClose: Number(meta.previousClose || 0),
+        price: Number(marketPrice.toFixed(4)),
+        open: Number(open.toFixed(4)),
+        high: Number(high.toFixed(4)),
+        low: Number(low.toFixed(4)),
+        previousClose: Number(previousClose.toFixed(4)),
         change: Number(change.toFixed(4)),
         changePercent: Number(changePercent.toFixed(4)),
         latestTradingDay: timestamps.length ? new Date(timestamps[timestamps.length - 1] * 1000).toISOString().slice(0, 10) : '',

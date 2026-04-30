@@ -363,7 +363,7 @@ function App() {
   )
   const technical = useMemo(() => buildTechnicalSnapshot(history), [history])
   const tradingWindowHint = useMemo(() => getTradingWindowHint(), [])
-  const sevenRule = useMemo(() => calculateSevenPercentRule(entryPrice, quote?.price), [entryPrice, quote])
+  const sevenRule = useMemo(() => calculateSevenPercentRule(entryPrice, quote?.price), [entryPrice, quote?.price])
   const secondsSinceUpdate = useMemo(() => {
     if (!lastUpdated) return null
     return Math.max(0, Math.floor((nowTick - new Date(lastUpdated).getTime()) / 1000))
