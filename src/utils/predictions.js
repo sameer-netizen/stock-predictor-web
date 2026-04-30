@@ -745,6 +745,13 @@ export function buildForecast(history, timeframe = 'daily', options = {}) {
   const volatilityScale = isFiveMinute ? 0.8 : isHourly ? 1.1 : 1.6
   const modelSuite = computeModelSuite(closes, lookback)
   const residualProfile = estimateResidualProfile(closes, lookback, modelSuite)
+  const evaluation = evaluateModel(closes, lookback, (train) => ensemblePredict(train, modelSuite))
+  const directionalEval = evaluateDirectionalAccuracy(
+    closes,
+    lookback,
+    (train) => ensemblePredict(train, modelSuite),
+    45,
+  )
 
   const modelStates = modelSuite.reduce((acc, model) => {
     acc[model.key] = [...closes]
@@ -797,7 +804,8 @@ export function buildForecast(history, timeframe = 'daily', options = {}) {
       item.state[idx] = Math.max(0.01, softCorrected)
     })
 
-    const uncertaintyFromVol = lastClose * returnVolatility * Math.sqrt(step) * volatilityScale
+    const uncertaintyBase = Math.max(0.01, previous)
+    const uncertaintyFromVol = uncertaintyBase * returnVolatility * Math.sqrt(step) * volatilityScale
     const uncertaintyFromResidual = projection * residualProfile.residualSigma * Math.sqrt(step)
     const uncertainty = Math.max(uncertaintyFromVol, uncertaintyFromResidual)
     const quantileLower = projection * (1 + residualProfile.lowerQuantile * Math.sqrt(step))
@@ -822,11 +830,22 @@ export function buildForecast(history, timeframe = 'daily', options = {}) {
     })
   }
 
-  let confidenceLabel = 'Low'
-  if (returnVolatility < 0.015) confidenceLabel = 'High'
-  else if (returnVolatility < 0.03) confidenceLabel = 'Medium'
+  let confidenceScore = 0.5
+  if (Number.isFinite(evaluation.mape)) {
+    confidenceScore += clamp((6 - evaluation.mape) / 8, -0.2, 0.28)
+  }
+  if (Number.isFinite(evaluation.rmse)) {
+    const priceScale = Math.max(0.0001, mean(closes.slice(-Math.min(20, closes.length))) || lastClose)
+    const scaledRmse = evaluation.rmse / priceScale
+    confidenceScore += clamp((0.02 - scaledRmse) * 12, -0.2, 0.22)
+  }
+  confidenceScore += clamp(((directionalEval.hitRate || 50) - 50) / 100, -0.18, 0.18)
+  confidenceScore -= clamp((returnVolatility - 0.02) * 5, 0, 0.2)
+  confidenceScore = clamp(confidenceScore, 0.05, 0.95)
 
-  const evaluation = evaluateModel(closes, lookback, (train) => ensemblePredict(train, modelSuite))
+  let confidenceLabel = 'Low'
+  if (confidenceScore >= 0.68) confidenceLabel = 'High'
+  else if (confidenceScore >= 0.48) confidenceLabel = 'Medium'
   const modelComparison = modelSuite.map((model) => ({
     name: model.name,
     rmse: model.metrics.rmse,
@@ -846,6 +865,8 @@ export function buildForecast(history, timeframe = 'daily', options = {}) {
     realtimeBlendPercent: blendStart * 100,
     corridorSteps,
     corridorWidthPercent: baseCorridorWidth * 100,
+    directionalHitRate: directionalEval.hitRate,
+    confidenceScore: confidenceScore * 100,
   }
 
   return {

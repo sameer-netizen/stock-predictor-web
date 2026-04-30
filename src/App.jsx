@@ -729,6 +729,8 @@ function App() {
             <div><span>Corridor Steps</span><strong>{model.featureDiagnostics?.corridorSteps || 'N/A'}</strong></div>
             <div><span>Corridor Width</span><strong>{safeMetric(model.featureDiagnostics?.corridorWidthPercent, '%')}</strong></div>
             <div><span>Residual Sigma</span><strong>{safeMetric(model.featureDiagnostics?.residualSigma, '%')}</strong></div>
+            <div><span>Directional Hit Rate</span><strong>{safeMetric(model.featureDiagnostics?.directionalHitRate, '%')}</strong></div>
+            <div><span>Confidence Score</span><strong>{safeMetric(model.featureDiagnostics?.confidenceScore, '%')}</strong></div>
           </div>
           <p className="panel-note">Model leaderboard (lower RMSE/MAPE is better):</p>
           <ul className="model-list">
