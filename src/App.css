@@ -125,6 +125,60 @@ h1 {
   gap: 10px;
 }
 
+.market-buckets-card {
+  margin-top: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 14px;
+  padding: 14px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.market-buckets-card h3 {
+  margin: 0 0 6px;
+}
+
+.market-buckets-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.market-bucket {
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+  padding: 10px;
+  background: rgba(0, 0, 0, 0.15);
+}
+
+.market-bucket h4 {
+  margin: 0 0 8px;
+  font-size: 0.85rem;
+  color: #d9d6ea;
+}
+
+.bucket-symbols {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.bucket-symbol {
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-main);
+  border-radius: 999px;
+  padding: 6px 10px;
+  font-size: 0.74rem;
+  cursor: pointer;
+}
+
+.bucket-symbol.active {
+  background: linear-gradient(90deg, #00b4d8, #f4d35e);
+  color: #05060f;
+  border-color: transparent;
+}
+
 .symbol-btn {
   border: 1px solid rgba(255, 255, 255, 0.2);
   background: rgba(255, 255, 255, 0.05);
@@ -543,6 +597,10 @@ h1 {
 
   .kpi-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .market-buckets-grid {
+    grid-template-columns: 1fr;
   }
 
   .panel-grid,

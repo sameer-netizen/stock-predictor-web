@@ -27,30 +27,45 @@ const MARKET_OPTIONS = [
     label: 'US',
     suffix: '',
     watchlist: ['AAPL', 'MSFT', 'NVDA', 'GOOGL', 'AMZN', 'TSLA'],
+    popular: ['AAPL', 'MSFT', 'AMZN', 'GOOGL', 'META', 'TSLA'],
+    trending: ['NVDA', 'AMD', 'PLTR', 'SMCI', 'ARM', 'SNOW'],
+    stable: ['JNJ', 'PG', 'KO', 'PEP', 'WMT', 'MCD'],
   },
   {
     key: 'NSE',
     label: 'India NSE',
     suffix: '.NS',
     watchlist: ['RELIANCE.NS', 'TCS.NS', 'INFY.NS', 'HDFCBANK.NS', 'ICICIBANK.NS', 'SBIN.NS'],
+    popular: ['RELIANCE.NS', 'TCS.NS', 'INFY.NS', 'HDFCBANK.NS', 'ICICIBANK.NS', 'ITC.NS'],
+    trending: ['TATAMOTORS.NS', 'ADANIENT.NS', 'TRENT.NS', 'BAJFINANCE.NS', 'HAL.NS', 'BEL.NS'],
+    stable: ['HINDUNILVR.NS', 'NESTLEIND.NS', 'ASIANPAINT.NS', 'SUNPHARMA.NS', 'LT.NS', 'SBIN.NS'],
   },
   {
     key: 'BSE',
     label: 'India BSE',
     suffix: '.BO',
     watchlist: ['RELIANCE.BO', 'TCS.BO', 'INFY.BO', 'HDFCBANK.BO', 'ICICIBANK.BO', 'SBIN.BO'],
+    popular: ['RELIANCE.BO', 'TCS.BO', 'INFY.BO', 'HDFCBANK.BO', 'ICICIBANK.BO', 'ITC.BO'],
+    trending: ['TATAMOTORS.BO', 'ADANIENT.BO', 'BAJFINANCE.BO', 'TRENT.BO', 'HAL.BO', 'BEL.BO'],
+    stable: ['HINDUNILVR.BO', 'NESTLEIND.BO', 'ASIANPAINT.BO', 'SUNPHARMA.BO', 'LT.BO', 'SBIN.BO'],
   },
   {
     key: 'UK',
     label: 'UK LSE',
     suffix: '.L',
     watchlist: ['VOD.L', 'HSBA.L', 'BP.L', 'AZN.L', 'BARC.L', 'RIO.L'],
+    popular: ['HSBA.L', 'BP.L', 'VOD.L', 'AZN.L', 'GSK.L', 'SHEL.L'],
+    trending: ['RR.L', 'NWG.L', 'BARC.L', 'GLEN.L', 'TSCO.L', 'BA.L'],
+    stable: ['ULVR.L', 'DGE.L', 'REL.L', 'RKT.L', 'NG.L', 'LGEN.L'],
   },
   {
     key: 'JP',
     label: 'Japan TSE',
     suffix: '.T',
     watchlist: ['7203.T', '6758.T', '9984.T', '6861.T', '7974.T', '9432.T'],
+    popular: ['7203.T', '6758.T', '9984.T', '6501.T', '9432.T', '8035.T'],
+    trending: ['6920.T', '6146.T', '6857.T', '5411.T', '7267.T', '8306.T'],
+    stable: ['2914.T', '4452.T', '9433.T', '9020.T', '4502.T', '2502.T'],
   },
 ]
 const TIMEFRAMES = [
@@ -207,6 +222,14 @@ function App() {
   const allSymbols = useMemo(() => {
     return [...new Set([...activeMarket.watchlist, ...customSymbols])]
   }, [activeMarket, customSymbols])
+
+  const marketStockBuckets = useMemo(() => {
+    return [
+      { key: 'popular', label: 'Most Popular', symbols: activeMarket.popular || [] },
+      { key: 'trending', label: 'Trending', symbols: activeMarket.trending || [] },
+      { key: 'stable', label: 'Stable Picks', symbols: activeMarket.stable || [] },
+    ]
+  }, [activeMarket])
 
   const activateSymbol = (value) => {
     const next = normalizeSymbolForMarket(value, market)
@@ -530,6 +553,30 @@ function App() {
               </button>
             ))}
           </div>
+
+          <section className="market-buckets-card" aria-label="Market stock buckets">
+            <h3>{activeMarket.label} Buckets</h3>
+            <p className="panel-sub">Quick picks grouped by popularity, momentum, and relative stability.</p>
+            <div className="market-buckets-grid">
+              {marketStockBuckets.map((bucket) => (
+                <article key={bucket.key} className="market-bucket">
+                  <h4>{bucket.label}</h4>
+                  <div className="bucket-symbols">
+                    {bucket.symbols.map((item) => (
+                      <button
+                        key={`${bucket.key}-${item}`}
+                        type="button"
+                        className={item === symbol ? 'bucket-symbol active' : 'bucket-symbol'}
+                        onClick={() => activateSymbol(item)}
+                      >
+                        {item}
+                      </button>
+                    ))}
+                  </div>
+                </article>
+              ))}
+            </div>
+          </section>
         </div>
       </header>
 
