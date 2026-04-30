@@ -2,15 +2,25 @@ const ALPHA_BASE_URL = 'https://www.alphavantage.co/query'
 const YAHOO_BASE_URL = 'https://query1.finance.yahoo.com/v8/finance/chart'
 
 function getYahooWindow(timeframe) {
+  if (timeframe === '5m') {
+    return { range: '5d', interval: '5m' }
+  }
   if (timeframe === 'hourly') {
     return { range: '1mo', interval: '1h' }
   }
   return { range: '6mo', interval: '1d' }
 }
 
+function normalizeTimeframe(raw) {
+  const value = String(raw || 'daily').toLowerCase()
+  if (value === '5m') return '5m'
+  if (value === 'hourly') return 'hourly'
+  return 'daily'
+}
+
 export default async function handler(req, res) {
   const symbol = String(req.query.symbol || 'AAPL').toUpperCase()
-  const timeframe = String(req.query.timeframe || 'daily').toLowerCase() === 'hourly' ? 'hourly' : 'daily'
+  const timeframe = normalizeTimeframe(req.query.timeframe)
   const apiKey = process.env.ALPHA_VANTAGE_API_KEY
 
   try {
@@ -39,14 +49,18 @@ export default async function handler(req, res) {
         .sort((a, b) => new Date(a.date) - new Date(b.date))
 
       if (prices.length > 0) {
-        const cacheWindow = timeframe === 'hourly' ? 's-maxage=120, stale-while-revalidate=300' : 's-maxage=900, stale-while-revalidate=3600'
+        const cacheWindow = timeframe === 'daily'
+          ? 's-maxage=900, stale-while-revalidate=3600'
+          : timeframe === 'hourly'
+            ? 's-maxage=120, stale-while-revalidate=300'
+            : 's-maxage=30, stale-while-revalidate=120'
         res.setHeader('Cache-Control', cacheWindow)
         return res.status(200).json({ symbol, timeframe, prices })
       }
     }
 
-    if (timeframe === 'hourly') {
-      return res.status(404).json({ error: `No hourly history found for symbol ${symbol}` })
+    if (timeframe !== 'daily') {
+      return res.status(404).json({ error: `No ${timeframe} history found for symbol ${symbol}` })
     }
 
     if (!apiKey) {

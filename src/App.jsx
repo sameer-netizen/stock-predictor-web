@@ -23,18 +23,22 @@ import './App.css'
 
 const WATCHLIST = ['AAPL', 'MSFT', 'NVDA', 'GOOGL', 'AMZN', 'TSLA']
 const TIMEFRAMES = [
+  { key: '5m', label: '5m' },
   { key: 'daily', label: 'Daily' },
   { key: 'hourly', label: 'Hourly' },
 ]
 const QUOTE_POLL_BY_TIMEFRAME = {
+  '5m': 5_000,
   daily: 60_000,
   hourly: 15_000,
 }
 const HISTORY_POLL_BY_TIMEFRAME = {
+  '5m': 15_000,
   daily: 10 * 60_000,
   hourly: 60_000,
 }
 const INSIGHTS_POLL_BY_TIMEFRAME = {
+  '5m': 3 * 60_000,
   daily: 15 * 60_000,
   hourly: 5 * 60_000,
 }
@@ -103,7 +107,7 @@ async function fetchHistoryWithFallback(symbol, timeframe) {
     const data = await fetchJson(`/api/history?symbol=${encodeURIComponent(symbol)}&timeframe=${encodeURIComponent(timeframe)}`)
     return data.prices
   } catch (serverError) {
-    if (timeframe === 'hourly') throw serverError
+    if (timeframe !== 'daily') throw serverError
     if (!CLIENT_ALPHA_KEY) throw serverError
 
     const data = await fetchJson(
@@ -257,7 +261,7 @@ function App() {
   const sevenRule = useMemo(() => calculateSevenPercentRule(entryPrice, quote?.price), [entryPrice, quote])
 
   const chartData = useMemo(() => {
-    const dateFormat = timeframe === 'hourly' ? 'DD MMM HH:mm' : 'DD MMM'
+    const dateFormat = timeframe === 'daily' ? 'DD MMM' : 'DD MMM HH:mm'
     const actual = history.map((item) => ({
       date: dayjs(item.date).format(dateFormat),
       actual: item.close,
@@ -486,7 +490,7 @@ function App() {
             <li>Treat projections as probability ranges, not guarantees.</li>
           </ul>
           <p className="panel-note">Last refresh: {lastUpdated ? dayjs(lastUpdated).format('HH:mm:ss') : '--:--:--'} (updates every {Math.round((QUOTE_POLL_BY_TIMEFRAME[timeframe] || 60000) / 1000)}s)</p>
-          <p className="panel-note">Active mode: {timeframe === 'hourly' ? 'Hourly (fast refresh)' : 'Daily (swing trend view)'}</p>
+          <p className="panel-note">Active mode: {timeframe === '5m' ? '5m (ultra-fast intraday)' : timeframe === 'hourly' ? 'Hourly (fast refresh)' : 'Daily (swing trend view)'}</p>
         </article>
       </section>
 

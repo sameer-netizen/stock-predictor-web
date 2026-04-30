@@ -198,6 +198,11 @@ export function calculateSevenPercentRule(entryPrice, currentPrice) {
 }
 
 export function buildForecast(history, timeframe = 'daily') {
+  const isFiveMinute = timeframe === '5m'
+  const isHourly = timeframe === 'hourly'
+
+  const horizonLabel = isFiveMinute ? '5m +36' : isHourly ? 'Hour +24' : 'Day +7'
+
   if (!Array.isArray(history) || history.length < 25) {
     return {
       forecast: [],
@@ -205,7 +210,7 @@ export function buildForecast(history, timeframe = 'daily') {
       confidenceLabel: 'Low',
       score: 0.5,
       evaluation: { rmse: null, mape: null, sampleSize: 0 },
-      horizonLabel: timeframe === 'hourly' ? 'Hour +24' : 'Day +7',
+      horizonLabel,
     }
   }
 
@@ -231,15 +236,17 @@ export function buildForecast(history, timeframe = 'daily') {
 
   const dailyDrift = normalizedSlope + maSignal * 0.35
   const forecast = []
-  const steps = timeframe === 'hourly' ? 24 : 7
-  const lookback = timeframe === 'hourly' ? 48 : 30
-  const volatilityScale = timeframe === 'hourly' ? 1.1 : 1.6
+  const steps = isFiveMinute ? 36 : isHourly ? 24 : 7
+  const lookback = isFiveMinute ? 96 : isHourly ? 48 : 30
+  const volatilityScale = isFiveMinute ? 0.8 : isHourly ? 1.1 : 1.6
 
   for (let step = 1; step <= steps; step += 1) {
     const projection = lastClose * (1 + dailyDrift * step)
     const uncertainty = lastClose * returnVolatility * Math.sqrt(step) * volatilityScale
     const date = new Date(latestDate)
-    if (timeframe === 'hourly') {
+    if (isFiveMinute) {
+      date.setMinutes(date.getMinutes() + step * 5)
+    } else if (isHourly) {
       date.setHours(date.getHours() + step)
     } else {
       date.setDate(date.getDate() + step)
@@ -265,6 +272,6 @@ export function buildForecast(history, timeframe = 'daily') {
     confidenceLabel,
     score,
     evaluation,
-    horizonLabel: timeframe === 'hourly' ? 'Hour +24' : 'Day +7',
+    horizonLabel,
   }
 }
