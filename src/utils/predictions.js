@@ -156,33 +156,8 @@ function bollinger(values, period = 20, width = 2) {
   }
 }
 
-function evaluateModel(closes, lookback = 30) {
-  if (closes.length < lookback + 10) {
-    return { rmse: null, mape: null, sampleSize: 0 }
-  }
-
-  const errorsSquared = []
-  const percentErrors = []
-
-  for (let i = lookback; i < closes.length - 1; i += 1) {
-    const train = closes.slice(i - lookback, i)
-    const slope = linearRegressionSlope(train)
-    const drift = train.at(-1) === 0 ? 0 : slope / train.at(-1)
-    const predicted = train.at(-1) * (1 + drift)
-    const actual = closes[i]
-    const diff = actual - predicted
-
-    errorsSquared.push(diff ** 2)
-    if (actual !== 0) {
-      percentErrors.push(Math.abs(diff / actual))
-    }
-  }
-
-  return {
-    rmse: errorsSquared.length ? Math.sqrt(mean(errorsSquared)) : null,
-    mape: percentErrors.length ? mean(percentErrors) * 100 : null,
-    sampleSize: errorsSquared.length,
-  }
+function evaluateModel(closes, lookback = 30, predictor = trendPredict) {
+  return evaluateGenericModel(closes, lookback, predictor)
 }
 
 function evaluateGenericModel(closes, lookback, predictor) {
@@ -393,9 +368,11 @@ function tuneLookback(closes, baseLookback, minLookback, maxLookback) {
     const rmse = recentEval.rmse || Number.POSITIVE_INFINITY
     const mape = recentEval.mape || Number.POSITIVE_INFINITY
     const hitRate = direction.hitRate || 0
+    const priceScale = mean(closes.slice(-Math.min(20, closes.length))) || closes.at(-1) || 1
+    const normalizedRmse = rmse / Math.max(priceScale, 0.0001)
 
-    // Lower score is better: penalize error, reward hit-rate.
-    const score = rmse * 0.6 + (mape / 100) * 0.4 - (hitRate / 100) * 0.25
+    // Lower score is better: penalize scaled error, reward directional accuracy.
+    const score = normalizedRmse * 0.55 + (mape / 100) * 0.35 - (hitRate / 100) * 0.2
 
     return {
       lookback,
@@ -429,7 +406,7 @@ function applyLiveAnchor(closes, timeframe, currentPrice) {
 
   const rawGap = (live - last) / last
   const clampedGap = clamp(rawGap, -0.06, 0.06)
-  const anchorStrength = timeframe === '5m' ? 0.92 : timeframe === 'hourly' ? 0.76 : 0.48
+  const anchorStrength = timeframe === '5m' ? 0.98 : timeframe === 'hourly' ? 0.88 : 0.62
   const anchoredLast = last * (1 - anchorStrength) + live * anchorStrength
   anchored[anchored.length - 1] = Math.max(0.01, anchoredLast)
 
@@ -750,18 +727,13 @@ export function buildForecast(history, timeframe = 'daily', options = {}) {
   }, {})
 
   const intradayLiveDrift = clamp(liveChangePercent / 100, -0.04, 0.04)
-  const realtimeReference = Number.isFinite(currentPrice) && currentPrice > 0
-    ? currentPrice * (1 + intradayLiveDrift * (isFiveMinute ? 0.6 : isHourly ? 0.45 : 0.25))
-    : lastClose
-  const persistentBlendBase = isFiveMinute ? 0.72 : isHourly ? 0.58 : 0.4
-  const persistentBlendFloor = isFiveMinute ? 0.18 : isHourly ? 0.12 : 0.08
-  const blendHalfLife = isFiveMinute ? 12 : isHourly ? 8 : 4
-  const anchorRatio = lastClose > 0 ? realtimeReference / lastClose : 1
-  const calibrationStrength = Math.abs(anchorRatio - 1)
-  const shouldCalibratePath = calibrationStrength > 0.002
-  const clampedAnchorRatio = clamp(anchorRatio, 0.92, 1.08)
-  const corridorSteps = isFiveMinute ? 12 : isHourly ? 8 : 4
-  const baseCorridorWidth = isFiveMinute ? 0.006 : isHourly ? 0.009 : 0.014
+  const liveBase = Number.isFinite(currentPrice) && currentPrice > 0 ? currentPrice : lastClose
+  const liveDriftFactor = isFiveMinute ? 0.58 : isHourly ? 0.42 : 0.22
+  const blendStart = isFiveMinute ? 0.82 : isHourly ? 0.68 : 0.46
+  const blendEnd = isFiveMinute ? 0.22 : isHourly ? 0.16 : 0.1
+  const blendHalfLife = isFiveMinute ? 14 : isHourly ? 10 : 5
+  const corridorSteps = isFiveMinute ? 10 : isHourly ? 6 : 3
+  const baseCorridorWidth = isFiveMinute ? 0.005 : isHourly ? 0.008 : 0.012
 
   for (let step = 1; step <= steps; step += 1) {
     const modelPredictions = modelSuite.map((model) => {
@@ -772,16 +744,16 @@ export function buildForecast(history, timeframe = 'daily', options = {}) {
     })
 
     const projectionRaw = modelPredictions.reduce((sum, item) => sum + item.value * item.weight, 0)
-    const calibratedRawProjection = shouldCalibratePath
-      ? projectionRaw * (1 + (clampedAnchorRatio - 1) * Math.exp(-(step - 1) / (isFiveMinute ? 20 : isHourly ? 14 : 8)))
-      : projectionRaw
     const previous = step === 1 ? lastClose : forecast.at(-1)?.value || lastClose
-    const cappedStepMove = Math.max(previous * 0.18, lastClose * 0.1)
+    const cappedStepMove = Math.max(
+      previous * (isFiveMinute ? 0.026 : isHourly ? 0.042 : 0.07),
+      lastClose * (isFiveMinute ? 0.02 : isHourly ? 0.03 : 0.05),
+    )
 
-    const referencePath = realtimeReference * (1 + intradayLiveDrift * Math.min(step, 4) * (isFiveMinute ? 0.55 : isHourly ? 0.4 : 0.22))
+    const referencePath = liveBase * (1 + intradayLiveDrift * Math.min(step, 6) * liveDriftFactor)
     const blendDecay = Math.exp(-Math.log(2) * (step - 1) / blendHalfLife)
-    const realtimeBlend = persistentBlendFloor + (persistentBlendBase - persistentBlendFloor) * blendDecay
-    const blendedProjection = calibratedRawProjection * (1 - realtimeBlend) + referencePath * realtimeBlend
+    const realtimeBlend = blendEnd + (blendStart - blendEnd) * blendDecay
+    const blendedProjection = projectionRaw * (1 - realtimeBlend) + referencePath * realtimeBlend
     let projection = clamp(blendedProjection, previous - cappedStepMove, previous + cappedStepMove)
 
     if (step <= corridorSteps) {
@@ -792,13 +764,11 @@ export function buildForecast(history, timeframe = 'daily', options = {}) {
       projection = clamp(projection, corridorLower, corridorUpper)
     }
 
-    const correction = projection - projectionRaw
-    if (Math.abs(correction) > 0) {
-      modelPredictions.forEach((item) => {
-        const idx = item.state.length - 1
-        item.state[idx] = Math.max(0.01, item.value + correction)
-      })
-    }
+    // Keep future steps coherent with corrected projection to prevent snapback drift.
+    modelPredictions.forEach((item) => {
+      const idx = item.state.length - 1
+      item.state[idx] = Math.max(0.01, projection)
+    })
 
     const uncertaintyFromVol = lastClose * returnVolatility * Math.sqrt(step) * volatilityScale
     const uncertaintyFromResidual = projection * residualProfile.residualSigma * Math.sqrt(step)
@@ -827,7 +797,7 @@ export function buildForecast(history, timeframe = 'daily', options = {}) {
   if (returnVolatility < 0.015) confidenceLabel = 'High'
   else if (returnVolatility < 0.03) confidenceLabel = 'Medium'
 
-  const evaluation = evaluateModel(closes, lookback)
+  const evaluation = evaluateModel(closes, lookback, (train) => ensemblePredict(train, modelSuite))
   const modelComparison = modelSuite.map((model) => ({
     name: model.name,
     rmse: model.metrics.rmse,
@@ -844,9 +814,7 @@ export function buildForecast(history, timeframe = 'daily', options = {}) {
     trendSignal: normalizedSlope * 100,
     residualSigma: residualProfile.residualSigma * 100,
     liveAnchorGapPercent: liveAnchor.anchorGapPercent,
-    realtimeBlendPercent: persistentBlendBase * 100,
-    anchorRatio: clampedAnchorRatio,
-    pathCalibrationActive: shouldCalibratePath ? 1 : 0,
+    realtimeBlendPercent: blendStart * 100,
     corridorSteps,
     corridorWidthPercent: baseCorridorWidth * 100,
   }
