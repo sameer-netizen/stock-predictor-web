@@ -733,7 +733,6 @@ export function buildForecast(history, timeframe = 'daily', options = {}) {
   const latestDate = new Date(history.at(-1).date)
   const lastClose = closes.at(-1)
 
-  const dailyDrift = normalizedSlope + maSignal * 0.35
   const forecast = []
   const steps = isFiveMinute ? 36 : isHourly ? 24 : 7
   const minLookback = isFiveMinute ? 96 : isHourly ? 48 : 30
@@ -750,29 +749,39 @@ export function buildForecast(history, timeframe = 'daily', options = {}) {
     return acc
   }, {})
 
+  const intradayLiveDrift = clamp(liveChangePercent / 100, -0.04, 0.04)
+  const realtimeReference = Number.isFinite(currentPrice) && currentPrice > 0
+    ? currentPrice * (1 + intradayLiveDrift * (isFiveMinute ? 0.6 : isHourly ? 0.45 : 0.25))
+    : lastClose
+  const persistentBlendBase = isFiveMinute ? 0.72 : isHourly ? 0.58 : 0.4
+  const persistentBlendFloor = isFiveMinute ? 0.18 : isHourly ? 0.12 : 0.08
+  const blendHalfLife = isFiveMinute ? 12 : isHourly ? 8 : 4
+
   for (let step = 1; step <= steps; step += 1) {
     const modelPredictions = modelSuite.map((model) => {
       const state = modelStates[model.key]
       const prediction = model.predictor(state)
       state.push(prediction)
-      return { key: model.key, value: prediction, weight: model.weight }
+      return { key: model.key, value: prediction, weight: model.weight, state }
     })
 
     const projectionRaw = modelPredictions.reduce((sum, item) => sum + item.value * item.weight, 0)
     const previous = step === 1 ? lastClose : forecast.at(-1)?.value || lastClose
     const cappedStepMove = Math.max(previous * 0.18, lastClose * 0.1)
 
-    const intradayLiveDrift = clamp(liveChangePercent / 100, -0.04, 0.04)
-    const realtimeTarget = Number.isFinite(currentPrice) && currentPrice > 0
-      ? currentPrice * (1 + intradayLiveDrift * (isFiveMinute ? 0.6 : isHourly ? 0.45 : 0.25))
-      : projectionRaw
-    const realtimeBlend = step === 1
-      ? (isFiveMinute ? 0.7 : isHourly ? 0.55 : 0.35)
-      : step === 2
-        ? (isFiveMinute ? 0.45 : isHourly ? 0.35 : 0.2)
-        : 0
-    const blendedProjection = projectionRaw * (1 - realtimeBlend) + realtimeTarget * realtimeBlend
+    const referencePath = realtimeReference * (1 + intradayLiveDrift * Math.min(step, 4) * (isFiveMinute ? 0.55 : isHourly ? 0.4 : 0.22))
+    const blendDecay = Math.exp(-Math.log(2) * (step - 1) / blendHalfLife)
+    const realtimeBlend = persistentBlendFloor + (persistentBlendBase - persistentBlendFloor) * blendDecay
+    const blendedProjection = projectionRaw * (1 - realtimeBlend) + referencePath * realtimeBlend
     const projection = clamp(blendedProjection, previous - cappedStepMove, previous + cappedStepMove)
+
+    const correction = projection - projectionRaw
+    if (Math.abs(correction) > 0) {
+      modelPredictions.forEach((item) => {
+        const idx = item.state.length - 1
+        item.state[idx] = Math.max(0.01, item.value + correction)
+      })
+    }
 
     const uncertaintyFromVol = lastClose * returnVolatility * Math.sqrt(step) * volatilityScale
     const uncertaintyFromResidual = projection * residualProfile.residualSigma * Math.sqrt(step)
@@ -818,6 +827,7 @@ export function buildForecast(history, timeframe = 'daily', options = {}) {
     trendSignal: normalizedSlope * 100,
     residualSigma: residualProfile.residualSigma * 100,
     liveAnchorGapPercent: liveAnchor.anchorGapPercent,
+    realtimeBlendPercent: persistentBlendBase * 100,
   }
 
   return {
