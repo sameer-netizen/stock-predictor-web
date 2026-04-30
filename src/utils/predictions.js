@@ -169,16 +169,16 @@ function evaluateGenericModel(closes, lookback, predictor) {
   const samples = []
 
   for (let i = lookback; i < closes.length - 1; i += 1) {
-    const train = closes.slice(i - lookback, i)
-    const predicted = predictor(train)
-    const actual = closes[i]
-    const diff = actual - predicted
+    const trainForNext = closes.slice(i - lookback + 1, i + 1)
+    const predictedNext = predictor(trainForNext)
+    const actualNext = closes[i + 1]
+    const diff = actualNext - predictedNext
 
     const relativePos = samples.length / Math.max(1, totalSteps)
     const weight = 0.3 + relativePos * 0.7
     samples.push({
       se: diff ** 2,
-      ape: actual !== 0 ? Math.abs(diff / actual) : 0,
+      ape: actualNext !== 0 ? Math.abs(diff / actualNext) : 0,
       weight,
     })
   }
@@ -274,15 +274,15 @@ function evaluateRecentModel(closes, lookback, predictor, recentSteps = 35) {
   const start = Math.max(lookback, closes.length - recentSteps - 1)
   const samples = []
   for (let i = start; i < closes.length - 1; i += 1) {
-    const train = closes.slice(i - lookback, i)
-    const predicted = predictor(train)
-    const actual = closes[i]
-    const diff = actual - predicted
+    const trainForNext = closes.slice(i - lookback + 1, i + 1)
+    const predictedNext = predictor(trainForNext)
+    const actualNext = closes[i + 1]
+    const diff = actualNext - predictedNext
     const progressiveWeight = 0.4 + ((i - start + 1) / Math.max(1, closes.length - 1 - start)) * 0.6
 
     samples.push({
       se: diff ** 2,
-      ape: actual !== 0 ? Math.abs(diff / actual) : 0,
+      ape: actualNext !== 0 ? Math.abs(diff / actualNext) : 0,
       weight: progressiveWeight,
     })
   }
