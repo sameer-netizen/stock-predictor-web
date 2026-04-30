@@ -79,12 +79,21 @@ function weightedMetrics(samples) {
 }
 
 export function formatCurrency(amount, currency = 'USD') {
-  const normalizedCurrency = String(currency || 'USD').toUpperCase() === 'INR' ? 'INR' : 'USD'
-  const locale = normalizedCurrency === 'INR' ? 'en-IN' : 'en-US'
+  const normalizedCurrency = String(currency || 'USD').toUpperCase()
+  const supportedCurrency = ['USD', 'INR', 'GBP', 'JPY'].includes(normalizedCurrency)
+    ? normalizedCurrency
+    : 'USD'
+  const localeByCurrency = {
+    USD: 'en-US',
+    INR: 'en-IN',
+    GBP: 'en-GB',
+    JPY: 'ja-JP',
+  }
+  const locale = localeByCurrency[supportedCurrency] || 'en-US'
 
   return Number(amount || 0).toLocaleString(locale, {
     style: 'currency',
-    currency: normalizedCurrency,
+    currency: supportedCurrency,
     maximumFractionDigits: 2,
   })
 }

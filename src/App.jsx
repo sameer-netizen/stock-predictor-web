@@ -191,6 +191,8 @@ function safeMetric(value, suffix = '') {
 function resolveCurrencyForSymbol(symbol) {
   const normalized = String(symbol || '').toUpperCase()
   if (normalized.endsWith('.NS') || normalized.endsWith('.BO')) return 'INR'
+  if (normalized.endsWith('.L')) return 'GBP'
+  if (normalized.endsWith('.T')) return 'JPY'
   return 'USD'
 }
 
