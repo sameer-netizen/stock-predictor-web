@@ -21,7 +21,38 @@ import {
 } from './utils/predictions'
 import './App.css'
 
-const WATCHLIST = ['AAPL', 'MSFT', 'NVDA', 'GOOGL', 'AMZN', 'TSLA']
+const MARKET_OPTIONS = [
+  {
+    key: 'US',
+    label: 'US',
+    suffix: '',
+    watchlist: ['AAPL', 'MSFT', 'NVDA', 'GOOGL', 'AMZN', 'TSLA'],
+  },
+  {
+    key: 'NSE',
+    label: 'India NSE',
+    suffix: '.NS',
+    watchlist: ['RELIANCE.NS', 'TCS.NS', 'INFY.NS', 'HDFCBANK.NS', 'ICICIBANK.NS', 'SBIN.NS'],
+  },
+  {
+    key: 'BSE',
+    label: 'India BSE',
+    suffix: '.BO',
+    watchlist: ['RELIANCE.BO', 'TCS.BO', 'INFY.BO', 'HDFCBANK.BO', 'ICICIBANK.BO', 'SBIN.BO'],
+  },
+  {
+    key: 'UK',
+    label: 'UK LSE',
+    suffix: '.L',
+    watchlist: ['VOD.L', 'HSBA.L', 'BP.L', 'AZN.L', 'BARC.L', 'RIO.L'],
+  },
+  {
+    key: 'JP',
+    label: 'Japan TSE',
+    suffix: '.T',
+    watchlist: ['7203.T', '6758.T', '9984.T', '6861.T', '7974.T', '9432.T'],
+  },
+]
 const TIMEFRAMES = [
   { key: '5m', label: '5m' },
   { key: 'daily', label: 'Daily' },
@@ -44,7 +75,22 @@ const INSIGHTS_POLL_BY_TIMEFRAME = {
 }
 const STALE_ALERT_SECONDS = 30
 const CLIENT_ALPHA_KEY = import.meta.env.VITE_ALPHA_VANTAGE_API_KEY
-const SYMBOL_PATTERN = /^[A-Z.-]{1,10}$/
+const SYMBOL_PATTERN = /^[A-Z0-9.-]{1,20}$/
+
+function resolveMarketConfig(marketKey) {
+  return MARKET_OPTIONS.find((item) => item.key === marketKey) || MARKET_OPTIONS[0]
+}
+
+function normalizeSymbolForMarket(value, marketKey) {
+  const input = String(value || '').trim().toUpperCase()
+  if (!input) return input
+
+  if (input.includes('.')) return input
+
+  const marketConfig = resolveMarketConfig(marketKey)
+  if (!marketConfig.suffix) return input
+  return `${input}${marketConfig.suffix}`
+}
 
 function parseQuotePayload(data, symbol) {
   const quote = data['Global Quote']
@@ -129,6 +175,7 @@ function safeMetric(value, suffix = '') {
 
 function App() {
   const [symbol, setSymbol] = useState('AAPL')
+  const [market, setMarket] = useState('US')
   const [timeframe, setTimeframe] = useState('daily')
   const [analysisTab, setAnalysisTab] = useState('overview')
   const [trainSplitPercent, setTrainSplitPercent] = useState(75)
@@ -155,15 +202,17 @@ function App() {
   const staleActiveRef = useRef(false)
   const staleStartedAtRef = useRef(null)
 
+  const activeMarket = useMemo(() => resolveMarketConfig(market), [market])
+
   const allSymbols = useMemo(() => {
-    return [...new Set([...WATCHLIST, ...customSymbols])]
-  }, [customSymbols])
+    return [...new Set([...activeMarket.watchlist, ...customSymbols])]
+  }, [activeMarket, customSymbols])
 
   const activateSymbol = (value) => {
-    const next = String(value || '').trim().toUpperCase()
+    const next = normalizeSymbolForMarket(value, market)
 
     if (!SYMBOL_PATTERN.test(next)) {
-      setSymbolError('Use a valid ticker format like AAPL, BRK-B, or TSLA.')
+      setSymbolError('Use a valid ticker format like AAPL, RELIANCE.NS, TCS.BO, or 7203.T.')
       return
     }
 
@@ -171,9 +220,18 @@ function App() {
     setSymbol(next)
     setSymbolInput('')
     setCustomSymbols((prev) => {
-      if (WATCHLIST.includes(next) || prev.includes(next)) return prev
+      if (activeMarket.watchlist.includes(next) || prev.includes(next)) return prev
       return [next, ...prev].slice(0, 8)
     })
+  }
+
+  const switchMarket = (nextMarket) => {
+    const marketConfig = resolveMarketConfig(nextMarket)
+    setMarket(nextMarket)
+    setSymbolError('')
+    setSymbolInput('')
+    setSymbol(marketConfig.watchlist[0] || 'AAPL')
+    setCustomSymbols([])
   }
 
   useEffect(() => {
@@ -405,10 +463,23 @@ function App() {
           <p className="eyebrow">Realtime + Forecast Dashboard</p>
           <h1>Stock Pulse Lab</h1>
           <p className="subtitle">
-            Track near realtime prices and switch between daily and hourly monitoring with timeframe-aware forecasts.
+            Track near realtime prices across Indian and global markets with timeframe-aware forecasts.
           </p>
         </div>
         <div>
+          <div className="market-picker" role="tablist" aria-label="Market selection">
+            {MARKET_OPTIONS.map((item) => (
+              <button
+                key={item.key}
+                type="button"
+                className={item.key === market ? 'market-btn active' : 'market-btn'}
+                onClick={() => switchMarket(item.key)}
+              >
+                {item.label}
+              </button>
+            ))}
+          </div>
+
           <form
             className="symbol-form"
             onSubmit={(event) => {
@@ -421,7 +492,7 @@ function App() {
               value={symbolInput}
               onChange={(event) => setSymbolInput(event.target.value.toUpperCase())}
               className="symbol-input"
-              placeholder="Search ticker e.g. META"
+              placeholder={activeMarket.suffix ? `Search ticker e.g. RELIANCE${activeMarket.suffix}` : 'Search ticker e.g. META'}
               aria-label="Search stock ticker"
             />
             <button type="submit" className="symbol-search-btn">Load</button>
@@ -692,6 +763,7 @@ function App() {
             <li>Treat projections as probability ranges, not guarantees.</li>
           </ul>
           <p className="panel-note">Last refresh: {lastUpdated ? dayjs(lastUpdated).format('HH:mm:ss') : '--:--:--'} (updates every {Math.round((QUOTE_POLL_BY_TIMEFRAME[timeframe] || 60000) / 1000)}s)</p>
+          <p className="panel-note">Active market: {activeMarket.label}</p>
           <p className="panel-note">Active mode: {timeframe === '5m' ? '5m (ultra-fast intraday)' : timeframe === 'hourly' ? 'Hourly (fast refresh)' : 'Daily (swing trend view)'}</p>
         </article>
       </section>

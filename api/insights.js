@@ -1,5 +1,6 @@
 const ALPHA_BASE_URL = 'https://www.alphavantage.co/query'
 const YAHOO_SEARCH_URL = 'https://query1.finance.yahoo.com/v1/finance/search'
+const YAHOO_RSS_URL = 'https://feeds.finance.yahoo.com/rss/2.0/headline'
 
 const STOPWORDS = new Set([
   'the', 'inc', 'corp', 'corporation', 'company', 'co', 'group', 'holdings',
@@ -77,6 +78,64 @@ function buildNeutralSentimentForNoCoverage(symbol) {
   }
 }
 
+function decodeXmlEntities(text) {
+  return String(text || '')
+    .replace(/&amp;/g, '&')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+}
+
+function stripCdata(text) {
+  return String(text || '').replace(/^<!\[CDATA\[/, '').replace(/\]\]>$/, '')
+}
+
+function parseYahooRss(xmlText) {
+  const items = []
+  const itemRegex = /<item>([\s\S]*?)<\/item>/g
+  let itemMatch = itemRegex.exec(xmlText)
+
+  while (itemMatch) {
+    const block = itemMatch[1] || ''
+    const titleMatch = block.match(/<title>([\s\S]*?)<\/title>/i)
+    const linkMatch = block.match(/<link>([\s\S]*?)<\/link>/i)
+    const sourceMatch = block.match(/<source[^>]*>([\s\S]*?)<\/source>/i)
+
+    const title = decodeXmlEntities(stripCdata(titleMatch?.[1] || '')).trim()
+    const link = decodeXmlEntities(stripCdata(linkMatch?.[1] || '')).trim()
+    const publisher = decodeXmlEntities(stripCdata(sourceMatch?.[1] || 'Yahoo Finance')).trim()
+
+    if (title) {
+      items.push({
+        title,
+        link,
+        publisher: publisher || 'Yahoo Finance',
+      })
+    }
+
+    itemMatch = itemRegex.exec(xmlText)
+  }
+
+  return items
+}
+
+async function fetchYahooRssHeadlines(symbol) {
+  try {
+    const rssUrl = `${YAHOO_RSS_URL}?s=${encodeURIComponent(symbol)}&region=US&lang=en-US`
+    const response = await fetch(rssUrl, {
+      headers: { 'User-Agent': 'Mozilla/5.0' },
+    })
+
+    if (!response.ok) return []
+
+    const xml = await response.text()
+    return parseYahooRss(xml).slice(0, 12)
+  } catch {
+    return []
+  }
+}
+
 export default async function handler(req, res) {
   const symbol = String(req.query.symbol || 'AAPL').toUpperCase()
   const apiKey = process.env.ALPHA_VANTAGE_API_KEY
@@ -98,7 +157,13 @@ export default async function handler(req, res) {
       relatedTickers: item.relatedTickers || [],
     }))
 
-    const relevantHeadlines = rawHeadlines.filter((item) => isHeadlineRelevant(item, symbol, symbolTokens, companyTokens))
+    let relevantHeadlines = rawHeadlines.filter((item) => isHeadlineRelevant(item, symbol, symbolTokens, companyTokens))
+
+    if (relevantHeadlines.length === 0) {
+      const rssHeadlines = await fetchYahooRssHeadlines(symbol)
+      relevantHeadlines = rssHeadlines.filter((item) => isHeadlineRelevant(item, symbol, symbolTokens, companyTokens))
+    }
+
     const headlines = relevantHeadlines.slice(0, 6)
 
     const sentiment = headlines.length > 0
@@ -106,8 +171,9 @@ export default async function handler(req, res) {
       : buildNeutralSentimentForNoCoverage(symbol)
 
     const relevanceCount = relevantHeadlines.length
-    const relevanceRatio = rawHeadlines.length
-      ? Math.round((relevanceCount / rawHeadlines.length) * 100)
+    const relevanceDenominator = rawHeadlines.length > 0 ? rawHeadlines.length : relevanceCount
+    const relevanceRatio = relevanceDenominator
+      ? Math.round((relevanceCount / relevanceDenominator) * 100)
       : 0
     const sentimentWithContext = {
       ...sentiment,

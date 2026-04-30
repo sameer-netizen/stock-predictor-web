@@ -9,11 +9,13 @@ Realtime stock monitoring website with a built-in 7-day forecast model.
 - Live feed heartbeat indicator (live/lagging/stale)
 - Optional stale-feed alerts (visual pulse + audible beep after 30s stale)
 - Alert log panel with stale/recovered timestamps
-- Watchlist switching (AAPL, MSFT, NVDA, GOOGL, AMZN, TSLA)
+- Market switcher for Indian and global exchanges (US, NSE, BSE, LSE, TSE)
+- Market-aware watchlists (for example RELIANCE.NS, TCS.BO, 7203.T)
 - Custom ticker search (load any valid symbol)
 - Historical chart + forecast overlay with confidence band
 - Technical indicators (SMA/EMA, RSI, Bollinger, support/resistance)
-- Sentiment scoring from recent finance headlines
+- Stock-specific sentiment scoring from ticker-focused headlines only
+- Secondary sentiment source fallback via Yahoo RSS when search feed coverage is low
 - ML-style model evaluation metrics (RMSE, MAPE)
 - Ensemble forecasting engine (trend regression + mean reversion + AR)
 - Model leaderboard with per-model RMSE/MAPE and dynamic ensemble weights
@@ -73,12 +75,13 @@ ALPHA_VANTAGE_API_KEY=your_free_alpha_vantage_key
 Vercel will host:
 
 - Static frontend from `dist`
-- API proxy endpoints under `/api/quote` and `/api/history`
+- API proxy endpoints under `/api/quote`, `/api/history`, and `/api/insights`
 
 ## API Endpoints
 
 - `GET /api/quote?symbol=AAPL`
 - `GET /api/history?symbol=AAPL`
+- `GET /api/insights?symbol=RELIANCE.NS`
 
 ## Important Notes
 
