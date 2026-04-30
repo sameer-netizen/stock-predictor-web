@@ -354,8 +354,12 @@ function App() {
   }, [symbol, timeframe])
 
   const model = useMemo(
-    () => buildForecast(history, timeframe, { trainSplitPercent }),
-    [history, timeframe, trainSplitPercent],
+    () => buildForecast(history, timeframe, {
+      trainSplitPercent,
+      currentPrice: quote?.price,
+      liveChangePercent: quote?.changePercent,
+    }),
+    [history, timeframe, trainSplitPercent, quote],
   )
   const technical = useMemo(() => buildTechnicalSnapshot(history), [history])
   const tradingWindowHint = useMemo(() => getTradingWindowHint(), [])

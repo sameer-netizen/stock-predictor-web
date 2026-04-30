@@ -415,6 +415,30 @@ function tuneLookback(closes, baseLookback, minLookback, maxLookback) {
   }
 }
 
+function applyLiveAnchor(closes, timeframe, currentPrice) {
+  const live = Number(currentPrice)
+  if (!Number.isFinite(live) || live <= 0 || !closes.length) {
+    return { closes: [...closes], anchorGapPercent: 0 }
+  }
+
+  const anchored = [...closes]
+  const last = anchored.at(-1)
+  if (!last || !Number.isFinite(last) || last <= 0) {
+    return { closes: anchored, anchorGapPercent: 0 }
+  }
+
+  const rawGap = (live - last) / last
+  const clampedGap = clamp(rawGap, -0.06, 0.06)
+  const anchorStrength = timeframe === '5m' ? 0.92 : timeframe === 'hourly' ? 0.76 : 0.48
+  const anchoredLast = last * (1 - anchorStrength) + live * anchorStrength
+  anchored[anchored.length - 1] = Math.max(0.01, anchoredLast)
+
+  return {
+    closes: anchored,
+    anchorGapPercent: clampedGap * 100,
+  }
+}
+
 function computeModelSuite(closes, lookback) {
   const modelDefs = [
     { key: 'trend', name: 'Trend Regression', predictor: trendPredict },
@@ -668,6 +692,8 @@ export function calculateSevenPercentRule(entryPrice, currentPrice) {
 
 export function buildForecast(history, timeframe = 'daily', options = {}) {
   const trainSplitPercent = Number(options.trainSplitPercent || 75)
+  const currentPrice = Number(options.currentPrice)
+  const liveChangePercent = Number(options.liveChangePercent || 0)
   const isFiveMinute = timeframe === '5m'
   const isHourly = timeframe === 'hourly'
 
@@ -685,7 +711,9 @@ export function buildForecast(history, timeframe = 'daily', options = {}) {
   }
 
   const rawCloses = history.map((point) => point.close)
-  const closes = buildRobustCloses(rawCloses)
+  const robustCloses = buildRobustCloses(rawCloses)
+  const liveAnchor = applyLiveAnchor(robustCloses, timeframe, currentPrice)
+  const closes = liveAnchor.closes
   const returns = computeReturns(closes)
 
   const shortWindow = closes.slice(-7)
@@ -733,7 +761,18 @@ export function buildForecast(history, timeframe = 'daily', options = {}) {
     const projectionRaw = modelPredictions.reduce((sum, item) => sum + item.value * item.weight, 0)
     const previous = step === 1 ? lastClose : forecast.at(-1)?.value || lastClose
     const cappedStepMove = Math.max(previous * 0.18, lastClose * 0.1)
-    const projection = clamp(projectionRaw, previous - cappedStepMove, previous + cappedStepMove)
+
+    const intradayLiveDrift = clamp(liveChangePercent / 100, -0.04, 0.04)
+    const realtimeTarget = Number.isFinite(currentPrice) && currentPrice > 0
+      ? currentPrice * (1 + intradayLiveDrift * (isFiveMinute ? 0.6 : isHourly ? 0.45 : 0.25))
+      : projectionRaw
+    const realtimeBlend = step === 1
+      ? (isFiveMinute ? 0.7 : isHourly ? 0.55 : 0.35)
+      : step === 2
+        ? (isFiveMinute ? 0.45 : isHourly ? 0.35 : 0.2)
+        : 0
+    const blendedProjection = projectionRaw * (1 - realtimeBlend) + realtimeTarget * realtimeBlend
+    const projection = clamp(blendedProjection, previous - cappedStepMove, previous + cappedStepMove)
 
     const uncertaintyFromVol = lastClose * returnVolatility * Math.sqrt(step) * volatilityScale
     const uncertaintyFromResidual = projection * residualProfile.residualSigma * Math.sqrt(step)
@@ -778,6 +817,7 @@ export function buildForecast(history, timeframe = 'daily', options = {}) {
     volatilitySignal: returnVolatility * 100,
     trendSignal: normalizedSlope * 100,
     residualSigma: residualProfile.residualSigma * 100,
+    liveAnchorGapPercent: liveAnchor.anchorGapPercent,
   }
 
   return {
