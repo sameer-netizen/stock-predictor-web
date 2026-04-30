@@ -841,6 +841,13 @@ export function buildForecast(history, timeframe = 'daily', options = {}) {
   }
   confidenceScore += clamp(((directionalEval.hitRate || 50) - 50) / 100, -0.18, 0.18)
   confidenceScore -= clamp((returnVolatility - 0.02) * 5, 0, 0.2)
+
+  const expectedSamples = isFiveMinute ? 120 : isHourly ? 80 : 55
+  const sampleCoverage = expectedSamples > 0
+    ? clamp((evaluation.sampleSize || 0) / expectedSamples, 0, 1)
+    : 1
+  confidenceScore -= (1 - sampleCoverage) * 0.22
+
   confidenceScore = clamp(confidenceScore, 0.05, 0.95)
 
   let confidenceLabel = 'Low'
@@ -867,6 +874,7 @@ export function buildForecast(history, timeframe = 'daily', options = {}) {
     corridorWidthPercent: baseCorridorWidth * 100,
     directionalHitRate: directionalEval.hitRate,
     confidenceScore: confidenceScore * 100,
+    sampleCoverage: sampleCoverage * 100,
   }
 
   return {
