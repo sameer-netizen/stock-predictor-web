@@ -737,8 +737,10 @@ export function buildForecast(history, timeframe = 'daily', options = {}) {
 
   const forecast = []
   const steps = isFiveMinute ? 36 : isHourly ? 24 : 7
-  const minLookback = isFiveMinute ? 96 : isHourly ? 48 : 30
-  const maxLookback = Math.max(minLookback, closes.length - 12)
+  const desiredMinLookback = isFiveMinute ? 60 : isHourly ? 40 : 30
+  const feasibleMinLookback = Math.max(20, closes.length - 26)
+  const minLookback = Math.min(desiredMinLookback, feasibleMinLookback)
+  const maxLookback = Math.max(minLookback, closes.length - 8)
   const baseLookback = clampInt(Math.floor(closes.length * (trainSplitPercent / 100)), minLookback, maxLookback)
   const tuning = tuneLookback(closes, baseLookback, minLookback, maxLookback)
   const lookback = tuning.bestLookback
