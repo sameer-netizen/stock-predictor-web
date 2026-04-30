@@ -74,9 +74,9 @@ const TIMEFRAMES = [
   { key: 'hourly', label: 'Hourly' },
 ]
 const QUOTE_POLL_BY_TIMEFRAME = {
-  '5m': 5_000,
-  daily: 60_000,
-  hourly: 15_000,
+  '5m': 10_000,
+  daily: 10_000,
+  hourly: 10_000,
 }
 const HISTORY_POLL_BY_TIMEFRAME = {
   '5m': 15_000,
