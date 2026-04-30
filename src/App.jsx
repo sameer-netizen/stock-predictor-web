@@ -91,9 +91,138 @@ const INSIGHTS_POLL_BY_TIMEFRAME = {
 const STALE_ALERT_SECONDS = 30
 const CLIENT_ALPHA_KEY = import.meta.env.VITE_ALPHA_VANTAGE_API_KEY
 const SYMBOL_PATTERN = /^[A-Z0-9.-]{1,20}$/
+const SIGNAL_ALERT_COOLDOWN_MS = {
+  '5m': 45_000,
+  hourly: 90_000,
+  daily: 4 * 60_000,
+}
+const MARKET_SESSION_CONFIG = {
+  US: { timeZone: 'America/New_York', openMinute: 9 * 60 + 30, closeMinute: 16 * 60 },
+  NSE: { timeZone: 'Asia/Kolkata', openMinute: 9 * 60 + 15, closeMinute: 15 * 60 + 30 },
+  BSE: { timeZone: 'Asia/Kolkata', openMinute: 9 * 60 + 15, closeMinute: 15 * 60 + 30 },
+  UK: { timeZone: 'Europe/London', openMinute: 8 * 60, closeMinute: 16 * 60 + 30 },
+  JP: { timeZone: 'Asia/Tokyo', openMinute: 9 * 60, closeMinute: 15 * 60 },
+}
+
+function clampValue(value, min, max) {
+  return Math.max(min, Math.min(max, value))
+}
 
 function resolveMarketConfig(marketKey) {
   return MARKET_OPTIONS.find((item) => item.key === marketKey) || MARKET_OPTIONS[0]
+}
+
+function getTzParts(timeZone, date = new Date()) {
+  const formatter = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    hour12: false,
+    weekday: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
+  const parts = formatter.formatToParts(date)
+  const map = Object.fromEntries(parts.map((item) => [item.type, item.value]))
+  return {
+    weekday: map.weekday || 'Mon',
+    hour: Number(map.hour || 0),
+    minute: Number(map.minute || 0),
+  }
+}
+
+function resolveMarketSession(marketKey, date = new Date()) {
+  const config = MARKET_SESSION_CONFIG[marketKey] || MARKET_SESSION_CONFIG.US
+  const parts = getTzParts(config.timeZone, date)
+  const minuteOfDay = parts.hour * 60 + parts.minute
+  const isWeekend = parts.weekday === 'Sat' || parts.weekday === 'Sun'
+
+  if (isWeekend) {
+    return {
+      status: 'closed',
+      phaseLabel: 'Weekend Closed',
+      isOpen: false,
+      isAfterHours: false,
+      timeZone: config.timeZone,
+    }
+  }
+
+  if (minuteOfDay < config.openMinute) {
+    return {
+      status: 'pre',
+      phaseLabel: 'Pre-Market',
+      isOpen: false,
+      isAfterHours: false,
+      timeZone: config.timeZone,
+    }
+  }
+
+  if (minuteOfDay <= config.closeMinute) {
+    return {
+      status: 'open',
+      phaseLabel: 'Market Open',
+      isOpen: true,
+      isAfterHours: false,
+      timeZone: config.timeZone,
+    }
+  }
+
+  return {
+    status: 'after',
+    phaseLabel: 'After Hours',
+    isOpen: false,
+    isAfterHours: true,
+    timeZone: config.timeZone,
+  }
+}
+
+function pickTopSymbols(items, count = 6) {
+  return items.slice(0, count).map((item) => item.symbol)
+}
+
+function rankDynamicBuckets(symbols, snapshots, fallbackBuckets) {
+  const rankedRows = symbols
+    .map((item) => {
+      const snapshot = snapshots[item]
+      const changePercent = Number(snapshot?.changePercent)
+      const price = Number(snapshot?.price)
+      if (!Number.isFinite(changePercent) || !Number.isFinite(price) || price <= 0) return null
+
+      return {
+        symbol: item,
+        changePercent,
+        stabilityScore: Math.abs(changePercent),
+        activityScore: Math.abs(changePercent) * 1.2 + Math.log10(price + 1),
+      }
+    })
+    .filter(Boolean)
+
+  if (rankedRows.length < 3) return fallbackBuckets
+
+  const popular = pickTopSymbols([...rankedRows].sort((a, b) => b.activityScore - a.activityScore))
+  const trending = pickTopSymbols([...rankedRows].sort((a, b) => b.changePercent - a.changePercent))
+  const stable = pickTopSymbols([...rankedRows].sort((a, b) => a.stabilityScore - b.stabilityScore))
+
+  return [
+    { key: 'popular', label: 'Most Popular', symbols: popular },
+    { key: 'trending', label: 'Trending', symbols: trending },
+    { key: 'stable', label: 'Stable Picks', symbols: stable },
+  ]
+}
+
+function summarizeLiveForecastStats(samples) {
+  if (!Array.isArray(samples) || samples.length === 0) {
+    return { sampleCount: 0, mae: null, mape: null, directionHitRate: null }
+  }
+
+  const mae = samples.reduce((sum, item) => sum + item.ae, 0) / samples.length
+  const mape = samples.reduce((sum, item) => sum + item.ape, 0) / samples.length
+  const directionHits = samples.reduce((sum, item) => sum + (item.directionHit ? 1 : 0), 0)
+
+  return {
+    sampleCount: samples.length,
+    mae,
+    mape,
+    directionHitRate: (directionHits / samples.length) * 100,
+  }
 }
 
 function normalizeSymbolForMarket(value, marketKey) {
@@ -221,9 +350,14 @@ function App() {
   const [nowTick, setNowTick] = useState(Date.now())
   const [alertsEnabled, setAlertsEnabled] = useState(true)
   const [alertEvents, setAlertEvents] = useState([])
+  const [marketSnapshots, setMarketSnapshots] = useState({})
+  const [liveForecastStatsByKey, setLiveForecastStatsByKey] = useState({})
   const staleAlertLastTsRef = useRef(0)
   const staleActiveRef = useRef(false)
   const staleStartedAtRef = useRef(null)
+  const pendingForecastRef = useRef({})
+  const processedQuoteTsRef = useRef({})
+  const signalAlertLastTsRef = useRef({})
 
   const activeMarket = useMemo(() => resolveMarketConfig(market), [market])
   const currencyCode = useMemo(() => resolveCurrencyForSymbol(symbol), [symbol])
@@ -234,13 +368,31 @@ function App() {
     return [...new Set([...activeMarket.watchlist, ...customSymbols])]
   }, [activeMarket, customSymbols])
 
-  const marketStockBuckets = useMemo(() => {
+  const fallbackBuckets = useMemo(() => {
     return [
       { key: 'popular', label: 'Most Popular', symbols: activeMarket.popular || [] },
       { key: 'trending', label: 'Trending', symbols: activeMarket.trending || [] },
       { key: 'stable', label: 'Stable Picks', symbols: activeMarket.stable || [] },
     ]
   }, [activeMarket])
+
+  const marketStockBuckets = useMemo(() => {
+    const universe = [...new Set([
+      ...activeMarket.watchlist,
+      ...(activeMarket.popular || []),
+      ...(activeMarket.trending || []),
+      ...(activeMarket.stable || []),
+    ])]
+    return rankDynamicBuckets(universe, marketSnapshots, fallbackBuckets)
+  }, [activeMarket, marketSnapshots, fallbackBuckets])
+
+  const liveTrackerKey = useMemo(() => `${symbol}|${timeframe}`, [symbol, timeframe])
+  const liveForecastStats = useMemo(() => {
+    const samples = liveForecastStatsByKey[liveTrackerKey] || []
+    return summarizeLiveForecastStats(samples)
+  }, [liveForecastStatsByKey, liveTrackerKey])
+
+  const sessionInfo = useMemo(() => resolveMarketSession(market, new Date(nowTick)), [market, nowTick])
 
   const activateSymbol = (value) => {
     const next = normalizeSymbolForMarket(value, market)
@@ -296,6 +448,44 @@ function App() {
       clearInterval(timer)
     }
   }, [symbol, timeframe])
+
+  useEffect(() => {
+    let isMounted = true
+    const symbols = [...new Set([
+      ...activeMarket.watchlist,
+      ...(activeMarket.popular || []),
+      ...(activeMarket.trending || []),
+      ...(activeMarket.stable || []),
+    ])]
+
+    const loadMarketSnapshots = async () => {
+      const settled = await Promise.allSettled(symbols.map((item) => fetchQuoteWithFallback(item)))
+      if (!isMounted) return
+
+      setMarketSnapshots((prev) => {
+        const next = { ...prev }
+        settled.forEach((entry) => {
+          if (entry.status !== 'fulfilled') return
+          const data = entry.value
+          if (!data?.symbol) return
+          next[data.symbol] = {
+            price: data.price,
+            changePercent: data.changePercent,
+            at: Date.now(),
+          }
+        })
+        return next
+      })
+    }
+
+    loadMarketSnapshots()
+    const timer = setInterval(loadMarketSnapshots, 45_000)
+
+    return () => {
+      isMounted = false
+      clearInterval(timer)
+    }
+  }, [activeMarket])
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -373,7 +563,7 @@ function App() {
     [history, timeframe, trainSplitPercent, quote?.price, quote?.changePercent],
   )
   const technical = useMemo(() => buildTechnicalSnapshot(history), [history])
-  const tradingWindowHint = useMemo(() => getTradingWindowHint(), [])
+  const tradingWindowHint = useMemo(() => getTradingWindowHint(market), [market, nowTick])
   const sevenRule = useMemo(() => calculateSevenPercentRule(entryPrice, quote?.price), [entryPrice, quote?.price])
   const secondsSinceUpdate = useMemo(() => {
     if (!lastUpdated) return null
@@ -383,7 +573,15 @@ function App() {
   const heartbeatState = useMemo(() => {
     if (secondsSinceUpdate === null) return { label: 'Waiting for first tick', tone: 'warn' }
     const pollMs = QUOTE_POLL_BY_TIMEFRAME[timeframe] || 60_000
-    const staleAfter = Math.round((pollMs * 2.5) / 1000)
+    if (!sessionInfo.isOpen) {
+      const calmWindow = Math.round((pollMs * 8) / 1000)
+      if (secondsSinceUpdate <= calmWindow) {
+        return { label: `${sessionInfo.phaseLabel} · ${secondsSinceUpdate}s ago`, tone: 'closed' }
+      }
+      return { label: `${sessionInfo.phaseLabel} · ${secondsSinceUpdate}s ago (slow feed)`, tone: 'warn' }
+    }
+
+    const staleAfter = Math.round((pollMs * 2.3) / 1000)
     if (secondsSinceUpdate <= Math.round(pollMs / 1000)) {
       return { label: `Live · ${secondsSinceUpdate}s ago`, tone: 'live' }
     }
@@ -391,9 +589,9 @@ function App() {
       return { label: `Lagging · ${secondsSinceUpdate}s ago`, tone: 'warn' }
     }
     return { label: `Stale · ${secondsSinceUpdate}s ago`, tone: 'stale' }
-  }, [secondsSinceUpdate, timeframe])
+  }, [secondsSinceUpdate, timeframe, sessionInfo])
 
-  const isStaleForAlert = heartbeatState.tone === 'stale' && (secondsSinceUpdate || 0) >= STALE_ALERT_SECONDS
+  const isStaleForAlert = sessionInfo.isOpen && heartbeatState.tone === 'stale' && (secondsSinceUpdate || 0) >= STALE_ALERT_SECONDS
 
   useEffect(() => {
     if (!alertsEnabled || !isStaleForAlert) return
@@ -460,6 +658,84 @@ function App() {
       ].slice(0, 12))
     }
   }, [isStaleForAlert, secondsSinceUpdate])
+
+  useEffect(() => {
+    if (!quote?.price || !lastUpdated) return
+    const oneStepProjection = Number(model.forecast?.[0]?.value)
+    if (!Number.isFinite(oneStepProjection) || oneStepProjection <= 0) return
+
+    const key = `${symbol}|${timeframe}`
+    const quoteTs = new Date(lastUpdated).getTime()
+    if (!Number.isFinite(quoteTs) || quoteTs <= 0) return
+    if (processedQuoteTsRef.current[key] === quoteTs) return
+    processedQuoteTsRef.current[key] = quoteTs
+
+    const pending = pendingForecastRef.current[key]
+    if (pending && quoteTs > pending.at) {
+      const actual = Number(quote.price)
+      const predicted = Number(pending.predicted)
+      const base = Number(pending.base)
+      if (Number.isFinite(actual) && Number.isFinite(predicted) && Number.isFinite(base) && actual > 0 && base > 0) {
+        const ae = Math.abs(actual - predicted)
+        const ape = Math.abs((actual - predicted) / actual) * 100
+        const predictedDirection = predicted >= base ? 1 : -1
+        const actualDirection = actual >= base ? 1 : -1
+
+        setLiveForecastStatsByKey((prev) => {
+          const nextList = [
+            {
+              at: new Date().toISOString(),
+              predicted,
+              actual,
+              ae,
+              ape,
+              directionHit: predictedDirection === actualDirection,
+            },
+            ...(prev[key] || []),
+          ].slice(0, 40)
+          return { ...prev, [key]: nextList }
+        })
+      }
+    }
+
+    pendingForecastRef.current[key] = {
+      at: quoteTs,
+      base: Number(quote.price),
+      predicted: oneStepProjection,
+    }
+  }, [symbol, timeframe, quote?.price, lastUpdated, model.forecast])
+
+  useEffect(() => {
+    if (!alertsEnabled || !sessionInfo.isOpen || !quote?.price) return
+    const nextStep = Number(model.forecast?.[0]?.value)
+    const current = Number(quote.price)
+    const confidence = Number(model.featureDiagnostics?.confidenceScore)
+    const sampleCoverage = Number(model.featureDiagnostics?.sampleCoverage)
+    if (!Number.isFinite(nextStep) || !Number.isFinite(current) || current <= 0) return
+
+    const movePct = ((nextStep - current) / current) * 100
+    const minMovePct = timeframe === '5m' ? 0.35 : timeframe === 'hourly' ? 0.75 : 1.4
+    if (Math.abs(movePct) < minMovePct) return
+    if (!Number.isFinite(confidence) || confidence < 62) return
+    if (!Number.isFinite(sampleCoverage) || sampleCoverage < 70) return
+
+    const key = `${symbol}|${timeframe}|${movePct >= 0 ? 'up' : 'down'}`
+    const now = Date.now()
+    const cooldownMs = SIGNAL_ALERT_COOLDOWN_MS[timeframe] || 60_000
+    const last = signalAlertLastTsRef.current[key] || 0
+    if (now - last < cooldownMs) return
+    signalAlertLastTsRef.current[key] = now
+
+    setAlertEvents((prev) => [
+      {
+        id: `${Date.now()}-signal`,
+        type: 'signal',
+        at: new Date().toISOString(),
+        message: `${movePct >= 0 ? 'Bullish' : 'Bearish'} setup: ${formatPercent(movePct)} projected next step, confidence ${safeMetric(confidence, '%')} and coverage ${safeMetric(sampleCoverage, '%')}.`,
+      },
+      ...prev,
+    ].slice(0, 12))
+  }, [alertsEnabled, sessionInfo, quote?.price, model.forecast, model.featureDiagnostics, symbol, timeframe])
 
   const chartData = useMemo(() => {
     const dateFormat = timeframe === 'daily' ? 'DD MMM' : 'DD MMM HH:mm'
@@ -571,7 +847,7 @@ function App() {
 
           <section className="market-buckets-card" aria-label="Market stock buckets">
             <h3>{activeMarket.label} Buckets</h3>
-            <p className="panel-sub">Quick picks grouped by popularity, momentum, and relative stability.</p>
+            <p className="panel-sub">Live-ranked from current market movement, momentum, and intraday stability.</p>
             <div className="market-buckets-grid">
               {marketStockBuckets.map((bucket) => (
                 <article key={bucket.key} className="market-bucket">
@@ -629,6 +905,9 @@ function App() {
         <p className={`heartbeat-pill ${heartbeatState.tone} ${isStaleForAlert ? 'alerting' : ''}`}>
           Feed Health: {heartbeatState.label}
         </p>
+        <p className={`heartbeat-pill session ${sessionInfo.status === 'open' ? 'live' : 'closed'}`}>
+          Session: {sessionInfo.phaseLabel} ({activeMarket.label})
+        </p>
         {isStaleForAlert && (
           <p className="stale-warning">
             Warning: feed is stale for {secondsSinceUpdate}s. Retry network or switch timeframe.
@@ -638,15 +917,26 @@ function App() {
 
       <section className="alert-log-card">
         <h3>Alert Log</h3>
-        <p className="panel-sub">Recent stale-feed events and recovery timestamps.</p>
+        <p className="panel-sub">Stale-feed, recovery, and confidence-filtered model signal events.</p>
         {alertEvents.length === 0 ? (
           <p className="panel-note">No alert events yet.</p>
         ) : (
           <ul className="alert-log-list">
             {alertEvents.map((event) => (
-              <li key={event.id} className={event.type === 'stale' ? 'alert-stale' : 'alert-recovered'}>
+              <li
+                key={event.id}
+                className={
+                  event.type === 'stale'
+                    ? 'alert-stale'
+                    : event.type === 'signal'
+                      ? 'alert-signal'
+                      : 'alert-recovered'
+                }
+              >
                 <span>{dayjs(event.at).format('DD MMM HH:mm:ss')}</span>
-                <strong>{event.type === 'stale' ? 'STALE' : 'RECOVERED'}</strong>
+                <strong>
+                  {event.type === 'stale' ? 'STALE' : event.type === 'signal' ? 'SIGNAL' : 'RECOVERED'}
+                </strong>
                 <em>{event.message}</em>
               </li>
             ))}
@@ -743,6 +1033,10 @@ function App() {
             <div><span>Directional Hit Rate</span><strong>{safeMetric(model.featureDiagnostics?.directionalHitRate, '%')}</strong></div>
             <div><span>Sample Coverage</span><strong>{safeMetric(model.featureDiagnostics?.sampleCoverage, '%')}</strong></div>
             <div><span>Confidence Score</span><strong>{safeMetric(model.featureDiagnostics?.confidenceScore, '%')}</strong></div>
+            <div><span>Live 1-Step Samples</span><strong>{liveForecastStats.sampleCount}</strong></div>
+            <div><span>Live Rolling MAE</span><strong>{safeMetric(liveForecastStats.mae)}</strong></div>
+            <div><span>Live Rolling MAPE</span><strong>{safeMetric(liveForecastStats.mape, '%')}</strong></div>
+            <div><span>Live Direction Hit</span><strong>{safeMetric(liveForecastStats.directionHitRate, '%')}</strong></div>
           </div>
           <p className="panel-note">Model leaderboard (lower RMSE/MAPE is better):</p>
           <ul className="model-list">
@@ -767,7 +1061,7 @@ function App() {
           <p className="panel-note">
             Best walk-forward strategy: {model.walkForward?.bestModel ? `${model.walkForward.bestModel.name} (${safeMetric(model.walkForward.bestModel.totalReturn, '%')})` : 'N/A'}
           </p>
-          <p className="panel-note">Next upgrade path: LSTM, gradient boosting, and regime-switching models.</p>
+          <p className="panel-note">Signal alerts trigger only when projected move, confidence, and sample coverage all exceed quality thresholds.</p>
         </article>
       </section>
 

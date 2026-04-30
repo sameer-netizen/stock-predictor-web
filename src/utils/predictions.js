@@ -647,21 +647,64 @@ export function buildTechnicalSnapshot(history) {
   }
 }
 
-export function getTradingWindowHint() {
+export function getTradingWindowHint(marketKey = 'US') {
+  const marketConfig = {
+    US: {
+      tz: 'America/New_York',
+      label: 'ET',
+      openMinute: 9 * 60 + 30,
+      closeMinute: 16 * 60,
+      settleMinute: 10 * 60,
+    },
+    NSE: {
+      tz: 'Asia/Kolkata',
+      label: 'IST',
+      openMinute: 9 * 60 + 15,
+      closeMinute: 15 * 60 + 30,
+      settleMinute: 10 * 60,
+    },
+    BSE: {
+      tz: 'Asia/Kolkata',
+      label: 'IST',
+      openMinute: 9 * 60 + 15,
+      closeMinute: 15 * 60 + 30,
+      settleMinute: 10 * 60,
+    },
+    UK: {
+      tz: 'Europe/London',
+      label: 'UK',
+      openMinute: 8 * 60,
+      closeMinute: 16 * 60 + 30,
+      settleMinute: 9 * 60,
+    },
+    JP: {
+      tz: 'Asia/Tokyo',
+      label: 'JST',
+      openMinute: 9 * 60,
+      closeMinute: 15 * 60,
+      settleMinute: 10 * 60,
+    },
+  }
+  const config = marketConfig[marketKey] || marketConfig.US
   const formatter = new Intl.DateTimeFormat('en-US', {
-    timeZone: 'America/New_York',
+    timeZone: config.tz,
     hour: '2-digit',
     minute: '2-digit',
     hour12: false,
   })
   const [hour, minute] = formatter.format(new Date()).split(':').map(Number)
   const totalMinutes = hour * 60 + minute
-  const tenAm = 10 * 60
 
-  if (totalMinutes < tenAm) {
-    return 'Before 10:00 AM ET: volatility is often elevated in the opening session.'
+  if (totalMinutes < config.openMinute) {
+    return `Pre-open in ${config.label}: liquidity can be thin and spreads wider.`
   }
-  return 'After 10:00 AM ET: opening volatility has usually cooled versus market open.'
+  if (totalMinutes <= config.settleMinute) {
+    return `Opening hour in ${config.label}: volatility is usually elevated.`
+  }
+  if (totalMinutes <= config.closeMinute) {
+    return `Core session in ${config.label}: trend reliability is generally stronger than the open.`
+  }
+  return `After-hours in ${config.label}: quotes may update slowly and gap risk rises.`
 }
 
 export function calculateSevenPercentRule(entryPrice, currentPrice) {
