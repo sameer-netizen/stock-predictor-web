@@ -722,6 +722,13 @@ function App() {
             <div><span>Momentum Signal</span><strong>{safeMetric(model.featureDiagnostics?.momentumSignal, '%')}</strong></div>
             <div><span>Volatility Signal</span><strong>{safeMetric(model.featureDiagnostics?.volatilitySignal, '%')}</strong></div>
             <div><span>Trend Signal</span><strong>{safeMetric(model.featureDiagnostics?.trendSignal, '%')}</strong></div>
+            <div><span>Tuned Lookback</span><strong>{model.trainingDiagnostics?.tunedLookback || 'N/A'}</strong></div>
+            <div><span>Base Lookback</span><strong>{model.trainingDiagnostics?.baseLookback || 'N/A'}</strong></div>
+            <div><span>Live Anchor Gap</span><strong>{safeMetric(model.featureDiagnostics?.liveAnchorGapPercent, '%')}</strong></div>
+            <div><span>Realtime Blend</span><strong>{safeMetric(model.featureDiagnostics?.realtimeBlendPercent, '%')}</strong></div>
+            <div><span>Corridor Steps</span><strong>{model.featureDiagnostics?.corridorSteps || 'N/A'}</strong></div>
+            <div><span>Corridor Width</span><strong>{safeMetric(model.featureDiagnostics?.corridorWidthPercent, '%')}</strong></div>
+            <div><span>Residual Sigma</span><strong>{safeMetric(model.featureDiagnostics?.residualSigma, '%')}</strong></div>
           </div>
           <p className="panel-note">Model leaderboard (lower RMSE/MAPE is better):</p>
           <ul className="model-list">
