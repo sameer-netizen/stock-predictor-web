@@ -28,6 +28,43 @@ h1 {
   color: var(--muted);
 }
 
+.symbol-form {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-bottom: 10px;
+}
+
+.symbol-input {
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-main);
+  border-radius: 10px;
+  padding: 10px 12px;
+  min-width: 230px;
+}
+
+.symbol-input::placeholder {
+  color: #b5b2ca;
+}
+
+.symbol-search-btn {
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: linear-gradient(90deg, #00b4d8, #f4d35e);
+  color: #05060f;
+  border-radius: 10px;
+  padding: 10px 14px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.symbol-error {
+  margin: 0 0 10px;
+  text-align: right;
+  color: #ffb4c0;
+  font-size: 0.82rem;
+}
+
 .symbol-picker {
   display: flex;
   flex-wrap: wrap;
@@ -150,6 +187,14 @@ h1 {
     grid-template-columns: 1fr;
   }
 
+  .symbol-form {
+    justify-content: flex-start;
+  }
+
+  .symbol-error {
+    text-align: left;
+  }
+
   .symbol-picker {
     justify-content: flex-start;
   }
@@ -162,6 +207,16 @@ h1 {
 @media (max-width: 620px) {
   .app-shell {
     padding: 22px 14px 28px;
+  }
+
+  .symbol-input {
+    min-width: 0;
+    width: 100%;
+  }
+
+  .symbol-form {
+    display: grid;
+    grid-template-columns: 1fr auto;
   }
 
   .kpi-grid {

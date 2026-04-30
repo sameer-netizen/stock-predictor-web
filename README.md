@@ -6,6 +6,7 @@ Realtime stock monitoring website with a built-in 7-day forecast model.
 
 - Near realtime quote refresh every 60 seconds
 - Watchlist switching (AAPL, MSFT, NVDA, GOOGL, AMZN, TSLA)
+- Custom ticker search (load any valid symbol)
 - Historical chart + forecast overlay with confidence band
 - Lightweight trend + volatility model (client-side)
 - Free-tier deployment ready (Vercel)

@@ -16,6 +16,7 @@ import './App.css'
 const WATCHLIST = ['AAPL', 'MSFT', 'NVDA', 'GOOGL', 'AMZN', 'TSLA']
 const POLL_INTERVAL_MS = 60_000
 const CLIENT_ALPHA_KEY = import.meta.env.VITE_ALPHA_VANTAGE_API_KEY
+const SYMBOL_PATTERN = /^[A-Z.-]{1,10}$/
 
 function parseQuotePayload(data, symbol) {
   const quote = data['Global Quote']
@@ -90,12 +91,36 @@ async function fetchHistoryWithFallback(symbol) {
 
 function App() {
   const [symbol, setSymbol] = useState('AAPL')
+  const [symbolInput, setSymbolInput] = useState('')
+  const [customSymbols, setCustomSymbols] = useState([])
+  const [symbolError, setSymbolError] = useState('')
   const [quote, setQuote] = useState(null)
   const [history, setHistory] = useState([])
   const [loadingQuote, setLoadingQuote] = useState(true)
   const [loadingHistory, setLoadingHistory] = useState(true)
   const [error, setError] = useState('')
   const [lastUpdated, setLastUpdated] = useState(null)
+
+  const allSymbols = useMemo(() => {
+    return [...new Set([...WATCHLIST, ...customSymbols])]
+  }, [customSymbols])
+
+  const activateSymbol = (value) => {
+    const next = String(value || '').trim().toUpperCase()
+
+    if (!SYMBOL_PATTERN.test(next)) {
+      setSymbolError('Use a valid ticker format like AAPL, BRK-B, or TSLA.')
+      return
+    }
+
+    setSymbolError('')
+    setSymbol(next)
+    setSymbolInput('')
+    setCustomSymbols((prev) => {
+      if (WATCHLIST.includes(next) || prev.includes(next)) return prev
+      return [next, ...prev].slice(0, 8)
+    })
+  }
 
   useEffect(() => {
     let isMounted = true
@@ -182,17 +207,38 @@ function App() {
             Track near realtime prices and estimate the next 7 sessions with a trend-plus-volatility model.
           </p>
         </div>
-        <div className="symbol-picker" role="tablist" aria-label="Stock symbols">
-          {WATCHLIST.map((item) => (
-            <button
-              key={item}
-              type="button"
-              className={item === symbol ? 'symbol-btn active' : 'symbol-btn'}
-              onClick={() => setSymbol(item)}
-            >
-              {item}
-            </button>
-          ))}
+        <div>
+          <form
+            className="symbol-form"
+            onSubmit={(event) => {
+              event.preventDefault()
+              activateSymbol(symbolInput)
+            }}
+          >
+            <input
+              type="text"
+              value={symbolInput}
+              onChange={(event) => setSymbolInput(event.target.value.toUpperCase())}
+              className="symbol-input"
+              placeholder="Search ticker e.g. META"
+              aria-label="Search stock ticker"
+            />
+            <button type="submit" className="symbol-search-btn">Load</button>
+          </form>
+          {symbolError && <p className="symbol-error">{symbolError}</p>}
+
+          <div className="symbol-picker" role="tablist" aria-label="Stock symbols">
+            {allSymbols.map((item) => (
+              <button
+                key={item}
+                type="button"
+                className={item === symbol ? 'symbol-btn active' : 'symbol-btn'}
+                onClick={() => activateSymbol(item)}
+              >
+                {item}
+              </button>
+            ))}
+          </div>
         </div>
       </header>
 
