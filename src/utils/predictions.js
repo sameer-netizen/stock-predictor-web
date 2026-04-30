@@ -51,6 +51,10 @@ function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value))
 }
 
+function clampInt(value, min, max) {
+  return Math.round(clamp(value, min, max))
+}
+
 function sma(values, period) {
   if (values.length < period) return null
   return mean(values.slice(-period))
@@ -306,6 +310,7 @@ function buildWalkForwardBacktest(closes, lookback, modelSuite) {
       const state = states[model.key]
       const totalReturn = ((state.equity / startEquity) - 1) * 100
       return {
+        key: model.key,
         name: model.name,
         type: 'model',
         hitRate: state.trades ? (state.hits / state.trades) * 100 : 0,
@@ -314,6 +319,7 @@ function buildWalkForwardBacktest(closes, lookback, modelSuite) {
       }
     }),
     {
+      key: 'ensemble',
       name: 'Ensemble Strategy',
       type: 'ensemble',
       hitRate: ensembleState.trades ? (ensembleState.hits / ensembleState.trades) * 100 : 0,
@@ -324,11 +330,29 @@ function buildWalkForwardBacktest(closes, lookback, modelSuite) {
 
   const bestModel = [...modelStats].sort((a, b) => b.totalReturn - a.totalReturn)[0] || null
 
+  const maxLength = Math.max(
+    ensembleState.curve.length,
+    ...modelSuite.map((model) => states[model.key].curve.length),
+  )
+
+  const equityCurve = Array.from({ length: maxLength }, (_, index) => {
+    const point = {
+      step: index,
+      ensemble: Number((ensembleState.curve[index] || ensembleState.curve.at(-1) || startEquity).toFixed(2)),
+    }
+    modelSuite.forEach((model) => {
+      const value = states[model.key].curve[index] || states[model.key].curve.at(-1) || startEquity
+      point[model.key] = Number(value.toFixed(2))
+    })
+    return point
+  })
+
   return {
     sampleSize: ensembleState.trades,
     startEquity,
     modelStats,
     bestModel,
+    equityCurve,
   }
 }
 
@@ -414,7 +438,8 @@ export function calculateSevenPercentRule(entryPrice, currentPrice) {
   }
 }
 
-export function buildForecast(history, timeframe = 'daily') {
+export function buildForecast(history, timeframe = 'daily', options = {}) {
+  const trainSplitPercent = Number(options.trainSplitPercent || 75)
   const isFiveMinute = timeframe === '5m'
   const isHourly = timeframe === 'hourly'
 
@@ -454,7 +479,8 @@ export function buildForecast(history, timeframe = 'daily') {
   const dailyDrift = normalizedSlope + maSignal * 0.35
   const forecast = []
   const steps = isFiveMinute ? 36 : isHourly ? 24 : 7
-  const lookback = isFiveMinute ? 96 : isHourly ? 48 : 30
+  const minLookback = isFiveMinute ? 96 : isHourly ? 48 : 30
+  const lookback = clampInt(Math.floor(closes.length * (trainSplitPercent / 100)), minLookback, Math.max(minLookback, closes.length - 12))
   const volatilityScale = isFiveMinute ? 0.8 : isHourly ? 1.1 : 1.6
   const modelSuite = computeModelSuite(closes, lookback)
 
@@ -519,5 +545,6 @@ export function buildForecast(history, timeframe = 'daily') {
     modelComparison,
     featureDiagnostics,
     walkForward,
+    trainSplitPercent,
   }
 }

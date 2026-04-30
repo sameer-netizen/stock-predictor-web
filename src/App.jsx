@@ -130,6 +130,8 @@ function safeMetric(value, suffix = '') {
 function App() {
   const [symbol, setSymbol] = useState('AAPL')
   const [timeframe, setTimeframe] = useState('daily')
+  const [analysisTab, setAnalysisTab] = useState('overview')
+  const [trainSplitPercent, setTrainSplitPercent] = useState(75)
   const [symbolInput, setSymbolInput] = useState('')
   const [customSymbols, setCustomSymbols] = useState([])
   const [symbolError, setSymbolError] = useState('')
@@ -270,7 +272,10 @@ function App() {
     }
   }, [symbol, timeframe])
 
-  const model = useMemo(() => buildForecast(history, timeframe), [history, timeframe])
+  const model = useMemo(
+    () => buildForecast(history, timeframe, { trainSplitPercent }),
+    [history, timeframe, trainSplitPercent],
+  )
   const technical = useMemo(() => buildTechnicalSnapshot(history), [history])
   const tradingWindowHint = useMemo(() => getTradingWindowHint(), [])
   const sevenRule = useMemo(() => calculateSevenPercentRule(entryPrice, quote?.price), [entryPrice, quote])
@@ -380,6 +385,18 @@ function App() {
 
     return [...actual.slice(-40), ...future]
   }, [history, model, timeframe])
+
+  const backtestCurveData = useMemo(() => {
+    const curve = model.walkForward?.equityCurve || []
+    if (!curve.length) return []
+    return curve.map((point, index) => ({
+      step: index,
+      ensemble: point.ensemble,
+      trend: point.trend,
+      reversion: point.reversion,
+      ar1: point.ar1,
+    }))
+  }, [model])
 
   return (
     <main className="app-shell">
@@ -503,6 +520,26 @@ function App() {
           </ul>
         )}
       </section>
+
+      <section className="analysis-tabs">
+        <button
+          type="button"
+          className={analysisTab === 'overview' ? 'analysis-tab active' : 'analysis-tab'}
+          onClick={() => setAnalysisTab('overview')}
+        >
+          Market Overview
+        </button>
+        <button
+          type="button"
+          className={analysisTab === 'backtest' ? 'analysis-tab active' : 'analysis-tab'}
+          onClick={() => setAnalysisTab('backtest')}
+        >
+          Strategy Backtest
+        </button>
+      </section>
+
+      {analysisTab === 'overview' ? (
+        <>
 
       <section className="panel-grid">
         <article className="panel-card">
@@ -658,6 +695,69 @@ function App() {
           <p className="panel-note">Active mode: {timeframe === '5m' ? '5m (ultra-fast intraday)' : timeframe === 'hourly' ? 'Hourly (fast refresh)' : 'Daily (swing trend view)'}</p>
         </article>
       </section>
+        </>
+      ) : (
+        <section className="backtest-card">
+          <h3>Walk-Forward Strategy Backtest</h3>
+          <p className="panel-sub">Compare equity growth across models with configurable train/test split.</p>
+
+          <div className="split-control">
+            <label htmlFor="trainSplit">Train Split: {trainSplitPercent}%</label>
+            <input
+              id="trainSplit"
+              type="range"
+              min="60"
+              max="90"
+              step="1"
+              value={trainSplitPercent}
+              onChange={(event) => setTrainSplitPercent(Number(event.target.value))}
+            />
+          </div>
+
+          <div className="metric-grid" style={{ marginBottom: '12px' }}>
+            <div><span>Backtest Samples</span><strong>{model.walkForward?.sampleSize || 0}</strong></div>
+            <div><span>Start Equity</span><strong>{formatCurrency(model.walkForward?.startEquity || 10000)}</strong></div>
+            <div><span>Best Strategy</span><strong>{model.walkForward?.bestModel?.name || 'N/A'}</strong></div>
+            <div><span>Best Return</span><strong>{safeMetric(model.walkForward?.bestModel?.totalReturn, '%')}</strong></div>
+          </div>
+
+          <div className="backtest-chart">
+            {backtestCurveData.length === 0 ? (
+              <p className="loading">Not enough history for backtest curve.</p>
+            ) : (
+              <ResponsiveContainer width="100%" height={360}>
+                <LineChart data={backtestCurveData} margin={{ top: 10, right: 20, left: 0, bottom: 10 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.1)" />
+                  <XAxis dataKey="step" tick={{ fill: '#C6C2DA', fontSize: 12 }} />
+                  <YAxis tick={{ fill: '#C6C2DA', fontSize: 12 }} domain={['auto', 'auto']} />
+                  <Tooltip
+                    contentStyle={{
+                      background: '#111129',
+                      border: '1px solid #2C2B56',
+                      borderRadius: '10px',
+                    }}
+                  />
+                  <Legend />
+                  <Line type="monotone" dataKey="ensemble" stroke="#58E5A7" strokeWidth={2.6} dot={false} name="Ensemble" />
+                  <Line type="monotone" dataKey="trend" stroke="#FFC857" strokeWidth={1.7} dot={false} name="Trend" />
+                  <Line type="monotone" dataKey="reversion" stroke="#4D96FF" strokeWidth={1.7} dot={false} name="Reversion" />
+                  <Line type="monotone" dataKey="ar1" stroke="#FF7F50" strokeWidth={1.7} dot={false} name="AR(1)" />
+                </LineChart>
+              </ResponsiveContainer>
+            )}
+          </div>
+
+          <ul className="model-list">
+            {(model.walkForward?.modelStats || []).map((item) => (
+              <li key={item.name}>
+                <span>{item.name}</span>
+                <strong>{safeMetric(item.hitRate, '%')} hit</strong>
+                <em>Return {safeMetric(item.totalReturn, '%')} · MaxDD {safeMetric(item.maxDrawdown, '%')}</em>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       <footer className="footer-note">
         <p>

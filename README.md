@@ -18,6 +18,8 @@ Realtime stock monitoring website with a built-in 7-day forecast model.
 - Ensemble forecasting engine (trend regression + mean reversion + AR)
 - Model leaderboard with per-model RMSE/MAPE and dynamic ensemble weights
 - Walk-forward backtest (hit-rate, return, max drawdown by model + ensemble)
+- Dedicated Strategy Backtest tab with equity-curve chart
+- Adjustable train/test split slider (60% to 90%) for model validation
 - Risk tools (7% stop-loss rule, 10 AM ET volatility hint, diversification reminders)
 - Lightweight trend + volatility model (client-side)
 - Free-tier deployment ready (Vercel)
