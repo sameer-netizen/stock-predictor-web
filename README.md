@@ -17,6 +17,7 @@ Realtime stock monitoring website with a built-in 7-day forecast model.
 - ML-style model evaluation metrics (RMSE, MAPE)
 - Ensemble forecasting engine (trend regression + mean reversion + AR)
 - Model leaderboard with per-model RMSE/MAPE and dynamic ensemble weights
+- Walk-forward backtest (hit-rate, return, max drawdown by model + ensemble)
 - Risk tools (7% stop-loss rule, 10 AM ET volatility hint, diversification reminders)
 - Lightweight trend + volatility model (client-side)
 - Free-tier deployment ready (Vercel)

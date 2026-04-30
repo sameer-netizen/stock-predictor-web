@@ -223,6 +223,115 @@ function computeModelSuite(closes, lookback) {
   }))
 }
 
+function computeDrawdown(equityCurve) {
+  if (!equityCurve.length) return 0
+  let peak = equityCurve[0]
+  let maxDrawdown = 0
+
+  equityCurve.forEach((value) => {
+    if (value > peak) peak = value
+    const dd = peak === 0 ? 0 : ((peak - value) / peak) * 100
+    if (dd > maxDrawdown) maxDrawdown = dd
+  })
+
+  return maxDrawdown
+}
+
+function buildWalkForwardBacktest(closes, lookback, modelSuite) {
+  if (closes.length < lookback + 20) {
+    return {
+      sampleSize: 0,
+      startEquity: 10000,
+      modelStats: [],
+      bestModel: null,
+    }
+  }
+
+  const startEquity = 10000
+  const states = modelSuite.reduce((acc, model) => {
+    acc[model.key] = {
+      equity: startEquity,
+      hits: 0,
+      trades: 0,
+      curve: [startEquity],
+    }
+    return acc
+  }, {})
+
+  const ensembleState = {
+    equity: startEquity,
+    hits: 0,
+    trades: 0,
+    curve: [startEquity],
+  }
+
+  for (let i = lookback; i < closes.length - 1; i += 1) {
+    const train = closes.slice(i - lookback, i)
+    const now = closes[i]
+    const next = closes[i + 1]
+    if (!now || !next) continue
+
+    const predictions = modelSuite.map((model) => {
+      const predicted = model.predictor(train)
+      const direction = predicted >= now ? 1 : -1
+      const actualReturn = (next - now) / now
+      const tradeReturn = direction * actualReturn
+
+      const state = states[model.key]
+      state.equity *= (1 + tradeReturn)
+      state.trades += 1
+      if ((next - now) * direction > 0) state.hits += 1
+      state.curve.push(state.equity)
+
+      return {
+        key: model.key,
+        direction,
+        weight: model.weight,
+      }
+    })
+
+    const ensembleDirectionScore = predictions.reduce((sum, item) => sum + item.direction * item.weight, 0)
+    const ensembleDirection = ensembleDirectionScore >= 0 ? 1 : -1
+    const actualReturn = (next - now) / now
+    const ensembleReturn = ensembleDirection * actualReturn
+
+    ensembleState.equity *= (1 + ensembleReturn)
+    ensembleState.trades += 1
+    if ((next - now) * ensembleDirection > 0) ensembleState.hits += 1
+    ensembleState.curve.push(ensembleState.equity)
+  }
+
+  const modelStats = [
+    ...modelSuite.map((model) => {
+      const state = states[model.key]
+      const totalReturn = ((state.equity / startEquity) - 1) * 100
+      return {
+        name: model.name,
+        type: 'model',
+        hitRate: state.trades ? (state.hits / state.trades) * 100 : 0,
+        totalReturn,
+        maxDrawdown: computeDrawdown(state.curve),
+      }
+    }),
+    {
+      name: 'Ensemble Strategy',
+      type: 'ensemble',
+      hitRate: ensembleState.trades ? (ensembleState.hits / ensembleState.trades) * 100 : 0,
+      totalReturn: ((ensembleState.equity / startEquity) - 1) * 100,
+      maxDrawdown: computeDrawdown(ensembleState.curve),
+    },
+  ]
+
+  const bestModel = [...modelStats].sort((a, b) => b.totalReturn - a.totalReturn)[0] || null
+
+  return {
+    sampleSize: ensembleState.trades,
+    startEquity,
+    modelStats,
+    bestModel,
+  }
+}
+
 export function buildTechnicalSnapshot(history) {
   if (!Array.isArray(history) || history.length < 30) {
     return {
@@ -392,6 +501,7 @@ export function buildForecast(history, timeframe = 'daily') {
     mape: model.metrics.mape,
     weight: model.weight * 100,
   }))
+  const walkForward = buildWalkForwardBacktest(closes, lookback, modelSuite)
 
   const featureDiagnostics = {
     momentumSignal: maSignal * 100,
@@ -408,5 +518,6 @@ export function buildForecast(history, timeframe = 'daily') {
     horizonLabel,
     modelComparison,
     featureDiagnostics,
+    walkForward,
   }
 }

@@ -574,6 +574,19 @@ function App() {
               </li>
             ))}
           </ul>
+          <p className="panel-note">Walk-forward backtest:</p>
+          <ul className="model-list">
+            {(model.walkForward?.modelStats || []).map((item) => (
+              <li key={item.name}>
+                <span>{item.name}</span>
+                <strong>{safeMetric(item.hitRate, '%')} hit</strong>
+                <em>Return {safeMetric(item.totalReturn, '%')} · MaxDD {safeMetric(item.maxDrawdown, '%')}</em>
+              </li>
+            ))}
+          </ul>
+          <p className="panel-note">
+            Best walk-forward strategy: {model.walkForward?.bestModel ? `${model.walkForward.bestModel.name} (${safeMetric(model.walkForward.bestModel.totalReturn, '%')})` : 'N/A'}
+          </p>
           <p className="panel-note">Next upgrade path: LSTM, gradient boosting, and regime-switching models.</p>
         </article>
       </section>
