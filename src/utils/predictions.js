@@ -27,6 +27,57 @@ function linearRegressionSlope(values) {
   return denominator === 0 ? 0 : numerator / denominator
 }
 
+function quantile(values, q) {
+  if (!values.length) return 0
+  const sorted = [...values].sort((a, b) => a - b)
+  const index = (sorted.length - 1) * clamp(q, 0, 1)
+  const lower = Math.floor(index)
+  const upper = Math.ceil(index)
+  if (lower === upper) return sorted[lower]
+  const weight = index - lower
+  return sorted[lower] * (1 - weight) + sorted[upper] * weight
+}
+
+function computeReturns(closes) {
+  return closes.slice(1).map((value, index) => {
+    const prev = closes[index]
+    if (!prev) return 0
+    return (value - prev) / prev
+  })
+}
+
+function buildRobustCloses(closes) {
+  if (closes.length < 8) return [...closes]
+
+  const rawReturns = computeReturns(closes).filter((item) => Number.isFinite(item))
+  const low = quantile(rawReturns, 0.03)
+  const high = quantile(rawReturns, 0.97)
+
+  const cleaned = [closes[0]]
+  for (let i = 1; i < closes.length; i += 1) {
+    const prev = cleaned[i - 1]
+    const rawReturn = prev ? (closes[i] - closes[i - 1]) / closes[i - 1] : 0
+    const clippedReturn = clamp(rawReturn, low, high)
+    cleaned.push(Math.max(0.01, prev * (1 + clippedReturn)))
+  }
+
+  return cleaned
+}
+
+function weightedMetrics(samples) {
+  if (!samples.length) return { rmse: null, mape: null, sampleSize: 0 }
+
+  const weightedSe = samples.reduce((acc, item) => acc + item.weight * item.se, 0)
+  const weightedApe = samples.reduce((acc, item) => acc + item.weight * item.ape, 0)
+  const totalWeight = samples.reduce((acc, item) => acc + item.weight, 0) || 1
+
+  return {
+    rmse: Math.sqrt(weightedSe / totalWeight),
+    mape: (weightedApe / totalWeight) * 100,
+    sampleSize: samples.length,
+  }
+}
+
 export function formatCurrency(amount) {
   return Number(amount || 0).toLocaleString('en-US', {
     style: 'currency',
@@ -139,23 +190,25 @@ function evaluateGenericModel(closes, lookback, predictor) {
     return { rmse: null, mape: null, sampleSize: 0 }
   }
 
-  const errorsSquared = []
-  const percentErrors = []
+  const totalSteps = closes.length - lookback - 1
+  const samples = []
 
   for (let i = lookback; i < closes.length - 1; i += 1) {
     const train = closes.slice(i - lookback, i)
     const predicted = predictor(train)
     const actual = closes[i]
     const diff = actual - predicted
-    errorsSquared.push(diff ** 2)
-    if (actual !== 0) percentErrors.push(Math.abs(diff / actual))
+
+    const relativePos = samples.length / Math.max(1, totalSteps)
+    const weight = 0.3 + relativePos * 0.7
+    samples.push({
+      se: diff ** 2,
+      ape: actual !== 0 ? Math.abs(diff / actual) : 0,
+      weight,
+    })
   }
 
-  return {
-    rmse: errorsSquared.length ? Math.sqrt(mean(errorsSquared)) : null,
-    mape: percentErrors.length ? mean(percentErrors) * 100 : null,
-    sampleSize: errorsSquared.length,
-  }
+  return weightedMetrics(samples)
 }
 
 function trendPredict(train) {
@@ -195,18 +248,115 @@ function ar1Predict(train) {
   return Math.max(0.01, train.at(-1) * (1 + predictedReturn))
 }
 
+function adaptiveEmaPredict(train) {
+  if (train.length < 6) return train.at(-1)
+  const fast = ema(train, 6) || train.at(-1)
+  const slow = ema(train, 18) || train.at(-1)
+  const momentum = slow === 0 ? 0 : (fast - slow) / slow
+  const blend = clamp(0.5 + momentum * 8, 0.2, 0.85)
+  const baseline = fast * blend + slow * (1 - blend)
+  const cappedMove = clamp(momentum, -0.06, 0.06)
+  return Math.max(0.01, baseline * (1 + cappedMove * 0.5))
+}
+
+function estimateMarketRegime(closes) {
+  const returns = computeReturns(closes)
+  const recentReturns = returns.slice(-25)
+  const vol = std(recentReturns)
+  const trend = closes.length > 15 && closes.at(-1)
+    ? linearRegressionSlope(closes.slice(-15)) / closes.at(-1)
+    : 0
+  const center = mean(closes.slice(-Math.min(20, closes.length)))
+  const distanceFromMean = center ? Math.abs((closes.at(-1) - center) / center) : 0
+  const latestMove = Math.abs(returns.at(-1) || 0)
+  const shockRatio = vol > 0 ? latestMove / vol : 0
+
+  return {
+    trendStrength: Math.abs(trend),
+    trendDirection: trend,
+    volatility: vol,
+    distanceFromMean,
+    shockRatio,
+  }
+}
+
+function regimeMultiplier(modelKey, regime) {
+  const trendBoost = 1 + clamp(regime.trendStrength * 55, 0, 1.2)
+  const volPenalty = 1 - clamp(regime.volatility * 10, 0, 0.35)
+  const meanRevBoost = 1 + clamp(regime.distanceFromMean * 4, 0, 1)
+  const shockPenalty = regime.shockRatio > 2.6 ? 0.9 : 1
+
+  if (modelKey === 'trend') return trendBoost * volPenalty
+  if (modelKey === 'reversion') return meanRevBoost * (regime.volatility > 0.018 ? 1.15 : 1)
+  if (modelKey === 'ar1') return (regime.volatility > 0.01 && regime.volatility < 0.04 ? 1.1 : 0.95) * shockPenalty
+  if (modelKey === 'adaptive') return 1.12 * shockPenalty
+  return 1
+}
+
+function evaluateRecentModel(closes, lookback, predictor, recentSteps = 35) {
+  if (closes.length < lookback + 10) return { rmse: null, mape: null, sampleSize: 0 }
+
+  const start = Math.max(lookback, closes.length - recentSteps - 1)
+  const samples = []
+  for (let i = start; i < closes.length - 1; i += 1) {
+    const train = closes.slice(i - lookback, i)
+    const predicted = predictor(train)
+    const actual = closes[i]
+    const diff = actual - predicted
+    const progressiveWeight = 0.4 + ((i - start + 1) / Math.max(1, closes.length - 1 - start)) * 0.6
+
+    samples.push({
+      se: diff ** 2,
+      ape: actual !== 0 ? Math.abs(diff / actual) : 0,
+      weight: progressiveWeight,
+    })
+  }
+
+  return weightedMetrics(samples)
+}
+
+function estimateResidualProfile(closes, lookback, modelSuite) {
+  if (closes.length < lookback + 12) {
+    return { residualSigma: 0.015, lowerQuantile: -0.02, upperQuantile: 0.02 }
+  }
+
+  const residuals = []
+  for (let i = lookback; i < closes.length - 1; i += 1) {
+    const train = closes.slice(i - lookback, i)
+    const base = closes[i]
+    if (!base) continue
+
+    const projected = modelSuite.reduce((sum, model) => sum + model.predictor(train) * model.weight, 0)
+    const actual = closes[i + 1]
+    const residualReturn = (actual - projected) / base
+    if (Number.isFinite(residualReturn)) residuals.push(residualReturn)
+  }
+
+  const sigma = std(residuals) || 0.015
+  return {
+    residualSigma: clamp(sigma, 0.006, 0.08),
+    lowerQuantile: quantile(residuals, 0.1),
+    upperQuantile: quantile(residuals, 0.9),
+  }
+}
+
 function computeModelSuite(closes, lookback) {
   const modelDefs = [
     { key: 'trend', name: 'Trend Regression', predictor: trendPredict },
     { key: 'reversion', name: 'Mean Reversion', predictor: meanReversionPredict },
     { key: 'ar1', name: 'Autoregressive AR(1)', predictor: ar1Predict },
+    { key: 'adaptive', name: 'Adaptive EMA Blend', predictor: adaptiveEmaPredict },
   ]
+
+  const regime = estimateMarketRegime(closes)
 
   const models = modelDefs.map((model) => {
     const metrics = evaluateGenericModel(closes, lookback, model.predictor)
+    const recentMetrics = evaluateRecentModel(closes, lookback, model.predictor)
     return {
       ...model,
       metrics,
+      recentMetrics,
     }
   })
 
@@ -217,7 +367,10 @@ function computeModelSuite(closes, lookback) {
 
   const weightBase = models.map((model) => {
     const rmse = model.metrics.rmse || fallbackRmse
-    return 1 / Math.max(rmse, 0.0001)
+    const recentRmse = model.recentMetrics.rmse || rmse
+    const blendedRmse = rmse * 0.45 + recentRmse * 0.55
+    const regimeBias = regimeMultiplier(model.key, regime)
+    return (1 / Math.max(blendedRmse, 0.0001)) * regimeBias
   })
   const weightTotal = weightBase.reduce((acc, value) => acc + value, 0) || 1
 
@@ -456,8 +609,9 @@ export function buildForecast(history, timeframe = 'daily', options = {}) {
     }
   }
 
-  const closes = history.map((point) => point.close)
-  const returns = closes.slice(1).map((value, index) => (value - closes[index]) / closes[index])
+  const rawCloses = history.map((point) => point.close)
+  const closes = buildRobustCloses(rawCloses)
+  const returns = computeReturns(closes)
 
   const shortWindow = closes.slice(-7)
   const longWindow = closes.slice(-21)
@@ -470,7 +624,7 @@ export function buildForecast(history, timeframe = 'daily', options = {}) {
   const maSignal = longMA === 0 ? 0 : (shortMA - longMA) / longMA
   const normalizedSlope = closes.at(-1) ? trendSlope / closes.at(-1) : 0
 
-  const scoreRaw = 0.5 + (maSignal * 5 + normalizedSlope * 12)
+  const scoreRaw = 0.5 + (maSignal * 4.8 + normalizedSlope * 11.5 - returnVolatility * 2.3)
   const score = Math.max(0, Math.min(1, scoreRaw))
 
   const latestDate = new Date(history.at(-1).date)
@@ -483,6 +637,7 @@ export function buildForecast(history, timeframe = 'daily', options = {}) {
   const lookback = clampInt(Math.floor(closes.length * (trainSplitPercent / 100)), minLookback, Math.max(minLookback, closes.length - 12))
   const volatilityScale = isFiveMinute ? 0.8 : isHourly ? 1.1 : 1.6
   const modelSuite = computeModelSuite(closes, lookback)
+  const residualProfile = estimateResidualProfile(closes, lookback, modelSuite)
 
   const modelStates = modelSuite.reduce((acc, model) => {
     acc[model.key] = [...closes]
@@ -497,8 +652,17 @@ export function buildForecast(history, timeframe = 'daily', options = {}) {
       return { key: model.key, value: prediction, weight: model.weight }
     })
 
-    const projection = modelPredictions.reduce((sum, item) => sum + item.value * item.weight, 0)
-    const uncertainty = lastClose * returnVolatility * Math.sqrt(step) * volatilityScale
+    const projectionRaw = modelPredictions.reduce((sum, item) => sum + item.value * item.weight, 0)
+    const previous = step === 1 ? lastClose : forecast.at(-1)?.value || lastClose
+    const cappedStepMove = Math.max(previous * 0.18, lastClose * 0.1)
+    const projection = clamp(projectionRaw, previous - cappedStepMove, previous + cappedStepMove)
+
+    const uncertaintyFromVol = lastClose * returnVolatility * Math.sqrt(step) * volatilityScale
+    const uncertaintyFromResidual = projection * residualProfile.residualSigma * Math.sqrt(step)
+    const uncertainty = Math.max(uncertaintyFromVol, uncertaintyFromResidual)
+    const quantileLower = projection * (1 + residualProfile.lowerQuantile * Math.sqrt(step))
+    const quantileUpper = projection * (1 + residualProfile.upperQuantile * Math.sqrt(step))
+
     const date = new Date(latestDate)
     if (isFiveMinute) {
       date.setMinutes(date.getMinutes() + step * 5)
@@ -511,8 +675,8 @@ export function buildForecast(history, timeframe = 'daily', options = {}) {
     forecast.push({
       date: date.toISOString(),
       value: Number(projection.toFixed(2)),
-      lower: Number((projection - uncertainty).toFixed(2)),
-      upper: Number((projection + uncertainty).toFixed(2)),
+      lower: Number(Math.min(projection - uncertainty, quantileLower).toFixed(2)),
+      upper: Number(Math.max(projection + uncertainty, quantileUpper).toFixed(2)),
     })
   }
 
@@ -525,6 +689,8 @@ export function buildForecast(history, timeframe = 'daily', options = {}) {
     name: model.name,
     rmse: model.metrics.rmse,
     mape: model.metrics.mape,
+    recentRmse: model.recentMetrics.rmse,
+    recentMape: model.recentMetrics.mape,
     weight: model.weight * 100,
   }))
   const walkForward = buildWalkForwardBacktest(closes, lookback, modelSuite)
@@ -533,6 +699,7 @@ export function buildForecast(history, timeframe = 'daily', options = {}) {
     momentumSignal: maSignal * 100,
     volatilitySignal: returnVolatility * 100,
     trendSignal: normalizedSlope * 100,
+    residualSigma: residualProfile.residualSigma * 100,
   }
 
   return {
