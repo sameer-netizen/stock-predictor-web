@@ -340,6 +340,81 @@ function estimateResidualProfile(closes, lookback, modelSuite) {
   }
 }
 
+function ensemblePredict(train, modelSuite) {
+  return modelSuite.reduce((sum, model) => sum + model.predictor(train) * model.weight, 0)
+}
+
+function evaluateDirectionalAccuracy(closes, lookback, predictor, recentSteps = 45) {
+  if (closes.length < lookback + 10) return { hitRate: 0, sampleSize: 0 }
+
+  const start = Math.max(lookback, closes.length - recentSteps - 1)
+  let hits = 0
+  let trades = 0
+
+  for (let i = start; i < closes.length - 1; i += 1) {
+    const train = closes.slice(i - lookback, i)
+    const now = closes[i]
+    const next = closes[i + 1]
+    if (!now || !next) continue
+
+    const predicted = predictor(train)
+    const predictedDirection = predicted >= now ? 1 : -1
+    const actualDirection = next >= now ? 1 : -1
+    if (predictedDirection === actualDirection) hits += 1
+    trades += 1
+  }
+
+  return {
+    hitRate: trades ? (hits / trades) * 100 : 0,
+    sampleSize: trades,
+  }
+}
+
+function tuneLookback(closes, baseLookback, minLookback, maxLookback) {
+  const candidateOffsets = [-24, -16, -8, 0, 8, 16, 24]
+  const candidates = [...new Set(candidateOffsets
+    .map((offset) => clampInt(baseLookback + offset, minLookback, maxLookback)))]
+
+  const scored = candidates.map((lookback) => {
+    const suite = computeModelSuite(closes, lookback)
+    const recentEval = evaluateRecentModel(
+      closes,
+      lookback,
+      (train) => ensemblePredict(train, suite),
+      45,
+    )
+    const direction = evaluateDirectionalAccuracy(
+      closes,
+      lookback,
+      (train) => ensemblePredict(train, suite),
+      45,
+    )
+
+    const rmse = recentEval.rmse || Number.POSITIVE_INFINITY
+    const mape = recentEval.mape || Number.POSITIVE_INFINITY
+    const hitRate = direction.hitRate || 0
+
+    // Lower score is better: penalize error, reward hit-rate.
+    const score = rmse * 0.6 + (mape / 100) * 0.4 - (hitRate / 100) * 0.25
+
+    return {
+      lookback,
+      score,
+      recentRmse: recentEval.rmse,
+      recentMape: recentEval.mape,
+      hitRate,
+      sampleSize: recentEval.sampleSize,
+    }
+  })
+
+  const best = [...scored].sort((a, b) => a.score - b.score)[0]
+  return {
+    bestLookback: best?.lookback || baseLookback,
+    diagnostics: scored,
+    bestDiagnostics: best || null,
+  }
+}
+
 function computeModelSuite(closes, lookback) {
   const modelDefs = [
     { key: 'trend', name: 'Trend Regression', predictor: trendPredict },
@@ -634,7 +709,10 @@ export function buildForecast(history, timeframe = 'daily', options = {}) {
   const forecast = []
   const steps = isFiveMinute ? 36 : isHourly ? 24 : 7
   const minLookback = isFiveMinute ? 96 : isHourly ? 48 : 30
-  const lookback = clampInt(Math.floor(closes.length * (trainSplitPercent / 100)), minLookback, Math.max(minLookback, closes.length - 12))
+  const maxLookback = Math.max(minLookback, closes.length - 12)
+  const baseLookback = clampInt(Math.floor(closes.length * (trainSplitPercent / 100)), minLookback, maxLookback)
+  const tuning = tuneLookback(closes, baseLookback, minLookback, maxLookback)
+  const lookback = tuning.bestLookback
   const volatilityScale = isFiveMinute ? 0.8 : isHourly ? 1.1 : 1.6
   const modelSuite = computeModelSuite(closes, lookback)
   const residualProfile = estimateResidualProfile(closes, lookback, modelSuite)
@@ -713,5 +791,11 @@ export function buildForecast(history, timeframe = 'daily', options = {}) {
     featureDiagnostics,
     walkForward,
     trainSplitPercent,
+    trainingDiagnostics: {
+      baseLookback,
+      tunedLookback: lookback,
+      tuningCandidates: tuning.diagnostics,
+      bestTuning: tuning.bestDiagnostics,
+    },
   }
 }
