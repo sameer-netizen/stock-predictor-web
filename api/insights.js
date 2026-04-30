@@ -7,11 +7,21 @@ const STOPWORDS = new Set([
   'plc', 'sa', 'ag', 'nv', 'and', 'for', 'class', 'common', 'stock',
 ])
 
+const EXCHANGE_SUFFIX_TOKENS = new Set(['NS', 'BO', 'L', 'T'])
+
 function buildSymbolTokens(symbol) {
-  return String(symbol || '')
+  const normalized = String(symbol || '').toUpperCase()
+  const rawTokens = normalized
     .toUpperCase()
     .split(/[^A-Z0-9]+/)
     .filter((token) => token.length > 1)
+
+  const baseSymbol = normalized.split('.')[0] || normalized
+  const baseTokens = baseSymbol
+    .split(/[^A-Z0-9]+/)
+    .filter((token) => token.length > 1)
+
+  return [...new Set([...baseTokens, ...rawTokens])].filter((token) => !EXCHANGE_SUFFIX_TOKENS.has(token))
 }
 
 function buildCompanyTokens(name) {
@@ -25,8 +35,9 @@ function isHeadlineRelevant(item, symbol, symbolTokens, companyTokens) {
   const title = String(item.title || '').toLowerCase()
   const text = `${title}`
   const normalizedSymbol = String(symbol || '').toUpperCase()
+  const baseSymbol = normalizedSymbol.split('.')[0] || normalizedSymbol
 
-  if (text.includes(normalizedSymbol.toLowerCase())) return true
+  if (text.includes(normalizedSymbol.toLowerCase()) || text.includes(baseSymbol.toLowerCase())) return true
 
   const hasSymbolMatch = symbolTokens.some((token) => {
     const escaped = token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').toLowerCase()
@@ -35,7 +46,10 @@ function isHeadlineRelevant(item, symbol, symbolTokens, companyTokens) {
 
   if (hasSymbolMatch) return true
 
-  return companyTokens.some((token) => text.includes(token))
+  return companyTokens.some((token) => {
+    const escaped = token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    return new RegExp(`\\b${escaped}\\b`, 'i').test(text)
+  })
 }
 
 function scoreHeadlines(news) {
