@@ -22,13 +22,8 @@ function buildCompanyTokens(name) {
 
 function isHeadlineRelevant(item, symbol, symbolTokens, companyTokens) {
   const title = String(item.title || '').toLowerCase()
-  const relatedTickers = Array.isArray(item.relatedTickers)
-    ? item.relatedTickers.map((ticker) => String(ticker || '').toUpperCase())
-    : []
   const text = `${title}`
   const normalizedSymbol = String(symbol || '').toUpperCase()
-
-  if (relatedTickers.includes(normalizedSymbol)) return true
 
   if (text.includes(normalizedSymbol.toLowerCase())) return true
 
