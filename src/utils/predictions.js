@@ -47,6 +47,10 @@ export function getSignalLabel(score) {
   return 'Momentum bias: Sideways'
 }
 
+function clamp(value, min, max) {
+  return Math.max(min, Math.min(max, value))
+}
+
 function sma(values, period) {
   if (values.length < period) return null
   return mean(values.slice(-period))
@@ -126,6 +130,99 @@ function evaluateModel(closes, lookback = 30) {
   }
 }
 
+function evaluateGenericModel(closes, lookback, predictor) {
+  if (closes.length < lookback + 10) {
+    return { rmse: null, mape: null, sampleSize: 0 }
+  }
+
+  const errorsSquared = []
+  const percentErrors = []
+
+  for (let i = lookback; i < closes.length - 1; i += 1) {
+    const train = closes.slice(i - lookback, i)
+    const predicted = predictor(train)
+    const actual = closes[i]
+    const diff = actual - predicted
+    errorsSquared.push(diff ** 2)
+    if (actual !== 0) percentErrors.push(Math.abs(diff / actual))
+  }
+
+  return {
+    rmse: errorsSquared.length ? Math.sqrt(mean(errorsSquared)) : null,
+    mape: percentErrors.length ? mean(percentErrors) * 100 : null,
+    sampleSize: errorsSquared.length,
+  }
+}
+
+function trendPredict(train) {
+  const slope = linearRegressionSlope(train)
+  const drift = train.at(-1) === 0 ? 0 : slope / train.at(-1)
+  return train.at(-1) * (1 + drift)
+}
+
+function meanReversionPredict(train) {
+  const last = train.at(-1)
+  const center = mean(train.slice(-Math.min(20, train.length)))
+  const adjustment = (center - last) * 0.35
+  return Math.max(0.01, last + adjustment)
+}
+
+function ar1Predict(train) {
+  if (train.length < 4) return train.at(-1)
+
+  const returns = train.slice(1).map((value, index) => {
+    const prev = train[index]
+    if (!prev) return 0
+    return (value - prev) / prev
+  })
+
+  const x = returns.slice(0, -1)
+  const y = returns.slice(1)
+  const xMean = mean(x)
+  const yMean = mean(y)
+  const variance = x.reduce((acc, value) => acc + (value - xMean) ** 2, 0)
+  const covariance = x.reduce((acc, value, index) => acc + ((value - xMean) * (y[index] - yMean)), 0)
+
+  const phi = variance === 0 ? 0 : covariance / variance
+  const lastReturn = returns.at(-1) || 0
+  const meanReturn = mean(returns)
+  const predictedReturn = clamp(phi * lastReturn + (1 - Math.min(1, Math.abs(phi))) * meanReturn, -0.08, 0.08)
+
+  return Math.max(0.01, train.at(-1) * (1 + predictedReturn))
+}
+
+function computeModelSuite(closes, lookback) {
+  const modelDefs = [
+    { key: 'trend', name: 'Trend Regression', predictor: trendPredict },
+    { key: 'reversion', name: 'Mean Reversion', predictor: meanReversionPredict },
+    { key: 'ar1', name: 'Autoregressive AR(1)', predictor: ar1Predict },
+  ]
+
+  const models = modelDefs.map((model) => {
+    const metrics = evaluateGenericModel(closes, lookback, model.predictor)
+    return {
+      ...model,
+      metrics,
+    }
+  })
+
+  const validRmses = models
+    .map((model) => model.metrics.rmse)
+    .filter((value) => Number.isFinite(value) && value > 0)
+  const fallbackRmse = validRmses.length ? mean(validRmses) : 1
+
+  const weightBase = models.map((model) => {
+    const rmse = model.metrics.rmse || fallbackRmse
+    return 1 / Math.max(rmse, 0.0001)
+  })
+  const weightTotal = weightBase.reduce((acc, value) => acc + value, 0) || 1
+
+  return models.map((model, index) => ({
+    ...model,
+    weight: weightBase[index] / weightTotal,
+  }))
+}
+
 export function buildTechnicalSnapshot(history) {
   if (!Array.isArray(history) || history.length < 30) {
     return {
@@ -145,6 +242,14 @@ export function buildTechnicalSnapshot(history) {
   const ema20 = ema(closes, 20)
   const rsi14 = rsi(closes, 14)
   const bb = bollinger(closes, 20, 2)
+  const returns = closes.slice(1).map((value, index) => {
+    const prev = closes[index]
+    if (!prev) return 0
+    return (value - prev) / prev
+  })
+  const realizedVolatility = std(returns.slice(-20)) * Math.sqrt(252) * 100
+  const momentum3 = closes.length > 3 ? ((closes.at(-1) - closes.at(-4)) / closes.at(-4)) * 100 : 0
+  const momentum10 = closes.length > 10 ? ((closes.at(-1) - closes.at(-11)) / closes.at(-11)) * 100 : 0
 
   const recent = history.slice(-20)
   const support = Math.min(...recent.map((point) => point.low || point.close))
@@ -162,6 +267,9 @@ export function buildTechnicalSnapshot(history) {
     support,
     resistance,
     trend,
+    realizedVolatility,
+    momentum3,
+    momentum10,
   }
 }
 
@@ -239,9 +347,22 @@ export function buildForecast(history, timeframe = 'daily') {
   const steps = isFiveMinute ? 36 : isHourly ? 24 : 7
   const lookback = isFiveMinute ? 96 : isHourly ? 48 : 30
   const volatilityScale = isFiveMinute ? 0.8 : isHourly ? 1.1 : 1.6
+  const modelSuite = computeModelSuite(closes, lookback)
+
+  const modelStates = modelSuite.reduce((acc, model) => {
+    acc[model.key] = [...closes]
+    return acc
+  }, {})
 
   for (let step = 1; step <= steps; step += 1) {
-    const projection = lastClose * (1 + dailyDrift * step)
+    const modelPredictions = modelSuite.map((model) => {
+      const state = modelStates[model.key]
+      const prediction = model.predictor(state)
+      state.push(prediction)
+      return { key: model.key, value: prediction, weight: model.weight }
+    })
+
+    const projection = modelPredictions.reduce((sum, item) => sum + item.value * item.weight, 0)
     const uncertainty = lastClose * returnVolatility * Math.sqrt(step) * volatilityScale
     const date = new Date(latestDate)
     if (isFiveMinute) {
@@ -265,6 +386,18 @@ export function buildForecast(history, timeframe = 'daily') {
   else if (returnVolatility < 0.03) confidenceLabel = 'Medium'
 
   const evaluation = evaluateModel(closes, lookback)
+  const modelComparison = modelSuite.map((model) => ({
+    name: model.name,
+    rmse: model.metrics.rmse,
+    mape: model.metrics.mape,
+    weight: model.weight * 100,
+  }))
+
+  const featureDiagnostics = {
+    momentumSignal: maSignal * 100,
+    volatilitySignal: returnVolatility * 100,
+    trendSignal: normalizedSlope * 100,
+  }
 
   return {
     forecast,
@@ -273,5 +406,7 @@ export function buildForecast(history, timeframe = 'daily') {
     score,
     evaluation,
     horizonLabel,
+    modelComparison,
+    featureDiagnostics,
   }
 }

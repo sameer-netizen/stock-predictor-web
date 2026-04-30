@@ -148,7 +148,10 @@ function App() {
   const [lastUpdated, setLastUpdated] = useState(null)
   const [nowTick, setNowTick] = useState(Date.now())
   const [alertsEnabled, setAlertsEnabled] = useState(true)
+  const [alertEvents, setAlertEvents] = useState([])
   const staleAlertLastTsRef = useRef(0)
+  const staleActiveRef = useRef(false)
+  const staleStartedAtRef = useRef(null)
 
   const allSymbols = useMemo(() => {
     return [...new Set([...WATCHLIST, ...customSymbols])]
@@ -323,6 +326,40 @@ function App() {
     }
   }, [alertsEnabled, isStaleForAlert, secondsSinceUpdate])
 
+  useEffect(() => {
+    const nowIso = new Date().toISOString()
+
+    if (isStaleForAlert && !staleActiveRef.current) {
+      staleActiveRef.current = true
+      staleStartedAtRef.current = Date.now()
+      setAlertEvents((prev) => [
+        {
+          id: `${Date.now()}-stale`,
+          type: 'stale',
+          at: nowIso,
+          message: `Feed became stale (${secondsSinceUpdate || 0}s since last tick).`,
+        },
+        ...prev,
+      ].slice(0, 12))
+      return
+    }
+
+    if (!isStaleForAlert && staleActiveRef.current) {
+      staleActiveRef.current = false
+      const staleDurationMs = staleStartedAtRef.current ? Date.now() - staleStartedAtRef.current : 0
+      staleStartedAtRef.current = null
+      setAlertEvents((prev) => [
+        {
+          id: `${Date.now()}-recovered`,
+          type: 'recovered',
+          at: nowIso,
+          message: `Feed recovered after ${Math.max(1, Math.round(staleDurationMs / 1000))}s stale window.`,
+        },
+        ...prev,
+      ].slice(0, 12))
+    }
+  }, [isStaleForAlert, secondsSinceUpdate])
+
   const chartData = useMemo(() => {
     const dateFormat = timeframe === 'daily' ? 'DD MMM' : 'DD MMM HH:mm'
     const actual = history.map((item) => ({
@@ -449,6 +486,24 @@ function App() {
         )}
       </section>
 
+      <section className="alert-log-card">
+        <h3>Alert Log</h3>
+        <p className="panel-sub">Recent stale-feed events and recovery timestamps.</p>
+        {alertEvents.length === 0 ? (
+          <p className="panel-note">No alert events yet.</p>
+        ) : (
+          <ul className="alert-log-list">
+            {alertEvents.map((event) => (
+              <li key={event.id} className={event.type === 'stale' ? 'alert-stale' : 'alert-recovered'}>
+                <span>{dayjs(event.at).format('DD MMM HH:mm:ss')}</span>
+                <strong>{event.type === 'stale' ? 'STALE' : 'RECOVERED'}</strong>
+                <em>{event.message}</em>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
       <section className="panel-grid">
         <article className="panel-card">
           <h3>Fundamental Analysis</h3>
@@ -476,6 +531,9 @@ function App() {
             <div><span>Resistance</span><strong>{safeMetric(technical.resistance)}</strong></div>
             <div><span>Bollinger Upper</span><strong>{safeMetric(technical.bollinger.upper)}</strong></div>
             <div><span>Bollinger Lower</span><strong>{safeMetric(technical.bollinger.lower)}</strong></div>
+            <div><span>Annualized Volatility</span><strong>{safeMetric(technical.realizedVolatility, '%')}</strong></div>
+            <div><span>Momentum (3)</span><strong>{safeMetric(technical.momentum3, '%')}</strong></div>
+            <div><span>Momentum (10)</span><strong>{safeMetric(technical.momentum10, '%')}</strong></div>
           </div>
         </article>
 
@@ -495,15 +553,28 @@ function App() {
 
         <article className="panel-card">
           <h3>Machine Learning Pipeline</h3>
-          <p className="panel-sub">Data collection, preprocessing, feature engineering, training, and evaluation.</p>
+          <p className="panel-sub">Data collection, preprocessing, feature engineering, model blending, and validation.</p>
           <div className="metric-grid">
             <div><span>Data Split</span><strong>75% train / 25% test</strong></div>
-            <div><span>Model Family</span><strong>Trend + Volatility</strong></div>
+            <div><span>Model Family</span><strong>Ensemble (Trend + Reversion + AR)</strong></div>
             <div><span>RMSE</span><strong>{safeMetric(model.evaluation.rmse)}</strong></div>
             <div><span>MAPE</span><strong>{safeMetric(model.evaluation.mape, '%')}</strong></div>
             <div><span>Samples</span><strong>{model.evaluation.sampleSize}</strong></div>
+            <div><span>Momentum Signal</span><strong>{safeMetric(model.featureDiagnostics?.momentumSignal, '%')}</strong></div>
+            <div><span>Volatility Signal</span><strong>{safeMetric(model.featureDiagnostics?.volatilitySignal, '%')}</strong></div>
+            <div><span>Trend Signal</span><strong>{safeMetric(model.featureDiagnostics?.trendSignal, '%')}</strong></div>
           </div>
-          <p className="panel-note">Alternative algorithms to compare: LSTM, ARIMA, Random Forest, SVM.</p>
+          <p className="panel-note">Model leaderboard (lower RMSE/MAPE is better):</p>
+          <ul className="model-list">
+            {(model.modelComparison || []).map((item) => (
+              <li key={item.name}>
+                <span>{item.name}</span>
+                <strong>W {safeMetric(item.weight, '%')}</strong>
+                <em>RMSE {safeMetric(item.rmse)} · MAPE {safeMetric(item.mape, '%')}</em>
+              </li>
+            ))}
+          </ul>
+          <p className="panel-note">Next upgrade path: LSTM, gradient boosting, and regime-switching models.</p>
         </article>
       </section>
 

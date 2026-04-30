@@ -8,12 +8,15 @@ Realtime stock monitoring website with a built-in 7-day forecast model.
 - Multi-timeframe monitoring: 5m, Daily, and Hourly modes
 - Live feed heartbeat indicator (live/lagging/stale)
 - Optional stale-feed alerts (visual pulse + audible beep after 30s stale)
+- Alert log panel with stale/recovered timestamps
 - Watchlist switching (AAPL, MSFT, NVDA, GOOGL, AMZN, TSLA)
 - Custom ticker search (load any valid symbol)
 - Historical chart + forecast overlay with confidence band
 - Technical indicators (SMA/EMA, RSI, Bollinger, support/resistance)
 - Sentiment scoring from recent finance headlines
 - ML-style model evaluation metrics (RMSE, MAPE)
+- Ensemble forecasting engine (trend regression + mean reversion + AR)
+- Model leaderboard with per-model RMSE/MAPE and dynamic ensemble weights
 - Risk tools (7% stop-loss rule, 10 AM ET volatility hint, diversification reminders)
 - Lightweight trend + volatility model (client-side)
 - Free-tier deployment ready (Vercel)
