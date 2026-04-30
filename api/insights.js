@@ -22,11 +22,10 @@ function buildCompanyTokens(name) {
 
 function isHeadlineRelevant(item, symbol, symbolTokens, companyTokens) {
   const title = String(item.title || '').toLowerCase()
-  const publisher = String(item.publisher || '').toLowerCase()
   const relatedTickers = Array.isArray(item.relatedTickers)
     ? item.relatedTickers.map((ticker) => String(ticker || '').toUpperCase())
     : []
-  const text = `${title} ${publisher}`
+  const text = `${title}`
   const normalizedSymbol = String(symbol || '').toUpperCase()
 
   if (relatedTickers.includes(normalizedSymbol)) return true
@@ -40,12 +39,7 @@ function isHeadlineRelevant(item, symbol, symbolTokens, companyTokens) {
 
   if (hasSymbolMatch) return true
 
-  let companyHitCount = 0
-  companyTokens.forEach((token) => {
-    if (text.includes(token)) companyHitCount += 1
-  })
-
-  return companyTokens.length > 0 && companyHitCount >= 2
+  return companyTokens.some((token) => text.includes(token))
 }
 
 function scoreHeadlines(news) {
@@ -80,6 +74,14 @@ function scoreHeadlines(news) {
   return { score, label: 'Neutral', details: 'Headlines are balanced.' }
 }
 
+function buildNeutralSentimentForNoCoverage(symbol) {
+  return {
+    score: 0.5,
+    label: 'Neutral',
+    details: `No strongly ${symbol}-specific headlines were found in the latest feed.`,
+  }
+}
+
 export default async function handler(req, res) {
   const symbol = String(req.query.symbol || 'AAPL').toUpperCase()
   const apiKey = process.env.ALPHA_VANTAGE_API_KEY
@@ -102,11 +104,13 @@ export default async function handler(req, res) {
     }))
 
     const relevantHeadlines = rawHeadlines.filter((item) => isHeadlineRelevant(item, symbol, symbolTokens, companyTokens))
-    const headlines = (relevantHeadlines.length ? relevantHeadlines : rawHeadlines).slice(0, 6)
+    const headlines = relevantHeadlines.slice(0, 6)
 
-    const sentiment = scoreHeadlines(headlines)
+    const sentiment = headlines.length > 0
+      ? scoreHeadlines(headlines)
+      : buildNeutralSentimentForNoCoverage(symbol)
 
-    const relevanceCount = relevantHeadlines.length || rawHeadlines.length
+    const relevanceCount = relevantHeadlines.length
     const relevanceRatio = rawHeadlines.length
       ? Math.round((relevanceCount / rawHeadlines.length) * 100)
       : 0
