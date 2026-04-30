@@ -297,11 +297,11 @@ function estimateResidualProfile(closes, lookback, modelSuite) {
 
   const residuals = []
   for (let i = lookback; i < closes.length - 1; i += 1) {
-    const train = closes.slice(i - lookback, i)
     const base = closes[i]
     if (!base) continue
 
-    const projected = modelSuite.reduce((sum, model) => sum + model.predictor(train) * model.weight, 0)
+    const trainForNext = closes.slice(i - lookback + 1, i + 1)
+    const projected = modelSuite.reduce((sum, model) => sum + model.predictor(trainForNext) * model.weight, 0)
     const actual = closes[i + 1]
     const residualReturn = (actual - projected) / base
     if (Number.isFinite(residualReturn)) residuals.push(residualReturn)
@@ -327,13 +327,13 @@ function evaluateDirectionalAccuracy(closes, lookback, predictor, recentSteps = 
   let trades = 0
 
   for (let i = start; i < closes.length - 1; i += 1) {
-    const train = closes.slice(i - lookback, i)
     const now = closes[i]
     const next = closes[i + 1]
     if (!now || !next) continue
 
-    const predicted = predictor(train)
-    const predictedDirection = predicted >= now ? 1 : -1
+    const trainForNext = closes.slice(i - lookback + 1, i + 1)
+    const predictedNext = predictor(trainForNext)
+    const predictedDirection = predictedNext >= now ? 1 : -1
     const actualDirection = next >= now ? 1 : -1
     if (predictedDirection === actualDirection) hits += 1
     trades += 1
@@ -499,14 +499,14 @@ function buildWalkForwardBacktest(closes, lookback, modelSuite) {
   }
 
   for (let i = lookback; i < closes.length - 1; i += 1) {
-    const train = closes.slice(i - lookback, i)
     const now = closes[i]
     const next = closes[i + 1]
     if (!now || !next) continue
+    const trainForNext = closes.slice(i - lookback + 1, i + 1)
 
     const predictions = modelSuite.map((model) => {
-      const predicted = model.predictor(train)
-      const direction = predicted >= now ? 1 : -1
+      const predictedNext = model.predictor(trainForNext)
+      const direction = predictedNext >= now ? 1 : -1
       const actualReturn = (next - now) / now
       const tradeReturn = direction * actualReturn
 
