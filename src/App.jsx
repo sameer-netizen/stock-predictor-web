@@ -10,7 +10,15 @@ import {
   XAxis,
   YAxis,
 } from 'recharts'
-import { buildForecast, formatCurrency, formatPercent, getSignalLabel } from './utils/predictions'
+import {
+  buildForecast,
+  buildTechnicalSnapshot,
+  calculateSevenPercentRule,
+  formatCurrency,
+  formatPercent,
+  getSignalLabel,
+  getTradingWindowHint,
+} from './utils/predictions'
 import './App.css'
 
 const WATCHLIST = ['AAPL', 'MSFT', 'NVDA', 'GOOGL', 'AMZN', 'TSLA']
@@ -89,6 +97,15 @@ async function fetchHistoryWithFallback(symbol) {
   }
 }
 
+async function fetchInsights(symbol) {
+  return fetchJson(`/api/insights?symbol=${encodeURIComponent(symbol)}`)
+}
+
+function safeMetric(value, suffix = '') {
+  if (value === null || value === undefined || Number.isNaN(Number(value))) return 'N/A'
+  return `${Number(value).toFixed(2)}${suffix}`
+}
+
 function App() {
   const [symbol, setSymbol] = useState('AAPL')
   const [symbolInput, setSymbolInput] = useState('')
@@ -96,8 +113,15 @@ function App() {
   const [symbolError, setSymbolError] = useState('')
   const [quote, setQuote] = useState(null)
   const [history, setHistory] = useState([])
+  const [insights, setInsights] = useState({
+    fundamentals: { peRatio: null, eps: null, pbRatio: null, roe: null, source: 'unavailable' },
+    sentiment: { score: 0.5, label: 'Neutral', details: 'Waiting for headlines...' },
+    headlines: [],
+  })
+  const [entryPrice, setEntryPrice] = useState('')
   const [loadingQuote, setLoadingQuote] = useState(true)
   const [loadingHistory, setLoadingHistory] = useState(true)
+  const [loadingInsights, setLoadingInsights] = useState(true)
   const [error, setError] = useState('')
   const [lastUpdated, setLastUpdated] = useState(null)
 
@@ -175,7 +199,38 @@ function App() {
     }
   }, [symbol])
 
+  useEffect(() => {
+    let isMounted = true
+
+    const loadInsights = async () => {
+      try {
+        const data = await fetchInsights(symbol)
+        if (!isMounted) return
+        setInsights(data)
+      } catch {
+        if (!isMounted) return
+        setInsights({
+          fundamentals: { peRatio: null, eps: null, pbRatio: null, roe: null, source: 'unavailable' },
+          sentiment: { score: 0.5, label: 'Neutral', details: 'Unable to load latest headlines.' },
+          headlines: [],
+        })
+      } finally {
+        if (isMounted) setLoadingInsights(false)
+      }
+    }
+
+    setLoadingInsights(true)
+    loadInsights()
+
+    return () => {
+      isMounted = false
+    }
+  }, [symbol])
+
   const model = useMemo(() => buildForecast(history), [history])
+  const technical = useMemo(() => buildTechnicalSnapshot(history), [history])
+  const tradingWindowHint = useMemo(() => getTradingWindowHint(), [])
+  const sevenRule = useMemo(() => calculateSevenPercentRule(entryPrice, quote?.price), [entryPrice, quote])
 
   const chartData = useMemo(() => {
     const actual = history.map((item) => ({
@@ -266,9 +321,67 @@ function App() {
         </article>
 
         <article className="kpi-card">
-          <p>Last Refresh</p>
-          <h2>{lastUpdated ? dayjs(lastUpdated).format('HH:mm:ss') : '--:--:--'}</h2>
-          <span>Auto updates every 60s</span>
+          <p>Sentiment Pulse</p>
+          <h2>{loadingInsights ? '...' : insights.sentiment.label}</h2>
+          <span>{insights.sentiment.details}</span>
+        </article>
+      </section>
+
+      <section className="panel-grid">
+        <article className="panel-card">
+          <h3>Fundamental Analysis</h3>
+          <p className="panel-sub">Intrinsic-value lens using core company metrics.</p>
+          <div className="metric-grid">
+            <div><span>P/E</span><strong>{safeMetric(insights.fundamentals.peRatio)}</strong></div>
+            <div><span>EPS</span><strong>{safeMetric(insights.fundamentals.eps)}</strong></div>
+            <div><span>P/B</span><strong>{safeMetric(insights.fundamentals.pbRatio)}</strong></div>
+            <div><span>ROE</span><strong>{safeMetric(insights.fundamentals.roe, '%')}</strong></div>
+          </div>
+          <p className="panel-note">
+            Source: {insights.fundamentals.source === 'alpha-vantage' ? 'Alpha Vantage' : 'Set ALPHA_VANTAGE_API_KEY for fundamentals'}
+          </p>
+        </article>
+
+        <article className="panel-card">
+          <h3>Technical Analysis</h3>
+          <p className="panel-sub">Indicators from price charts, volume, and momentum.</p>
+          <div className="metric-grid">
+            <div><span>SMA 20</span><strong>{safeMetric(technical.sma20)}</strong></div>
+            <div><span>EMA 20</span><strong>{safeMetric(technical.ema20)}</strong></div>
+            <div><span>RSI 14</span><strong>{safeMetric(technical.rsi14)}</strong></div>
+            <div><span>Trend</span><strong>{technical.trend}</strong></div>
+            <div><span>Support</span><strong>{safeMetric(technical.support)}</strong></div>
+            <div><span>Resistance</span><strong>{safeMetric(technical.resistance)}</strong></div>
+            <div><span>Bollinger Upper</span><strong>{safeMetric(technical.bollinger.upper)}</strong></div>
+            <div><span>Bollinger Lower</span><strong>{safeMetric(technical.bollinger.lower)}</strong></div>
+          </div>
+        </article>
+
+        <article className="panel-card">
+          <h3>Sentiment Analysis</h3>
+          <p className="panel-sub">Headlines and publisher language to capture investor psychology.</p>
+          <p className="panel-note">Score: {safeMetric(insights.sentiment.score * 100, '%')} ({insights.sentiment.label})</p>
+          <ul className="headline-list">
+            {insights.headlines.length === 0 && <li>No headlines available right now.</li>}
+            {insights.headlines.slice(0, 4).map((item) => (
+              <li key={item.link || item.title}>
+                <a href={item.link} target="_blank" rel="noreferrer">{item.title}</a>
+              </li>
+            ))}
+          </ul>
+        </article>
+
+        <article className="panel-card">
+          <h3>Machine Learning Pipeline</h3>
+          <p className="panel-sub">Data collection, preprocessing, feature engineering, training, and evaluation.</p>
+          <div className="metric-grid">
+            <div><span>Data Split</span><strong>75% train / 25% test</strong></div>
+            <div><span>Model Family</span><strong>Trend + Volatility</strong></div>
+            <div><span>RMSE</span><strong>{safeMetric(model.evaluation.rmse)}</strong></div>
+            <div><span>MAPE</span><strong>{safeMetric(model.evaluation.mape, '%')}</strong></div>
+            <div><span>Samples</span><strong>{model.evaluation.sampleSize}</strong></div>
+          </div>
+          <p className="panel-note">Alternative algorithms to compare: LSTM, ARIMA, Random Forest, SVM.</p>
         </article>
       </section>
 
@@ -303,6 +416,40 @@ function App() {
             </LineChart>
           </ResponsiveContainer>
         )}
+      </section>
+
+      <section className="risk-grid">
+        <article className="panel-card">
+          <h3>Risk Management</h3>
+          <p className="panel-sub">Apply practical rules before placing or adjusting a trade.</p>
+          <label className="entry-label" htmlFor="entryPrice">Entry Price</label>
+          <input
+            id="entryPrice"
+            className="symbol-input"
+            type="number"
+            min="0"
+            step="0.01"
+            placeholder="Enter your buy price"
+            value={entryPrice}
+            onChange={(event) => setEntryPrice(event.target.value)}
+          />
+          <p className="panel-note">7% rule stop-loss: {sevenRule.stopPrice ? formatCurrency(sevenRule.stopPrice) : 'N/A'}</p>
+          <p className="panel-note">{sevenRule.status}</p>
+          <p className="panel-note">{tradingWindowHint}</p>
+          <p className="panel-note">Diversification reminder: spread exposure across sectors and market caps.</p>
+        </article>
+
+        <article className="panel-card">
+          <h3>Best Practices & Pitfalls</h3>
+          <p className="panel-sub">Forecasts improve with discipline, not certainty.</p>
+          <ul className="headline-list">
+            <li>Use fundamentals + technicals + sentiment + model outputs together.</li>
+            <li>Avoid overfitting: validate using out-of-sample periods.</li>
+            <li>Do not rely only on technical signals for long-term investing.</li>
+            <li>Treat projections as probability ranges, not guarantees.</li>
+          </ul>
+          <p className="panel-note">Last refresh: {lastUpdated ? dayjs(lastUpdated).format('HH:mm:ss') : '--:--:--'} (updates every 60s)</p>
+        </article>
       </section>
 
       <footer className="footer-note">

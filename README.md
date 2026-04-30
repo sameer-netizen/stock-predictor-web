@@ -8,6 +8,10 @@ Realtime stock monitoring website with a built-in 7-day forecast model.
 - Watchlist switching (AAPL, MSFT, NVDA, GOOGL, AMZN, TSLA)
 - Custom ticker search (load any valid symbol)
 - Historical chart + forecast overlay with confidence band
+- Technical indicators (SMA/EMA, RSI, Bollinger, support/resistance)
+- Sentiment scoring from recent finance headlines
+- ML-style model evaluation metrics (RMSE, MAPE)
+- Risk tools (7% stop-loss rule, 10 AM ET volatility hint, diversification reminders)
 - Lightweight trend + volatility model (client-side)
 - Free-tier deployment ready (Vercel)
 
