@@ -359,7 +359,7 @@ function App() {
       currentPrice: quote?.price,
       liveChangePercent: quote?.changePercent,
     }),
-    [history, timeframe, trainSplitPercent, quote],
+    [history, timeframe, trainSplitPercent, quote?.price, quote?.changePercent],
   )
   const technical = useMemo(() => buildTechnicalSnapshot(history), [history])
   const tradingWindowHint = useMemo(() => getTradingWindowHint(), [])
@@ -714,8 +714,8 @@ function App() {
           <h3>Machine Learning Pipeline</h3>
           <p className="panel-sub">Data collection, preprocessing, feature engineering, model blending, and validation.</p>
           <div className="metric-grid">
-            <div><span>Data Split</span><strong>75% train / 25% test</strong></div>
-            <div><span>Model Family</span><strong>Ensemble (Trend + Reversion + AR)</strong></div>
+            <div><span>Data Split</span><strong>{trainSplitPercent}% train / {100 - trainSplitPercent}% test</strong></div>
+            <div><span>Model Family</span><strong>Ensemble (Trend + Reversion + AR + Adaptive EMA)</strong></div>
             <div><span>RMSE</span><strong>{safeMetric(model.evaluation.rmse)}</strong></div>
             <div><span>MAPE</span><strong>{safeMetric(model.evaluation.mape, '%')}</strong></div>
             <div><span>Samples</span><strong>{model.evaluation.sampleSize}</strong></div>

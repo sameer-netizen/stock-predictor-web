@@ -684,6 +684,31 @@ export function buildForecast(history, timeframe = 'daily', options = {}) {
       score: 0.5,
       evaluation: { rmse: null, mape: null, sampleSize: 0 },
       horizonLabel,
+      modelComparison: [],
+      featureDiagnostics: {
+        momentumSignal: 0,
+        volatilitySignal: 0,
+        trendSignal: 0,
+        residualSigma: 0,
+        liveAnchorGapPercent: 0,
+        realtimeBlendPercent: 0,
+        corridorSteps: 0,
+        corridorWidthPercent: 0,
+      },
+      walkForward: {
+        sampleSize: 0,
+        startEquity: 10000,
+        modelStats: [],
+        bestModel: null,
+        equityCurve: [],
+      },
+      trainSplitPercent,
+      trainingDiagnostics: {
+        baseLookback: null,
+        tunedLookback: null,
+        tuningCandidates: [],
+        bestTuning: null,
+      },
     }
   }
 
@@ -757,8 +782,9 @@ export function buildForecast(history, timeframe = 'daily', options = {}) {
     let projection = clamp(blendedProjection, previous - cappedStepMove, previous + cappedStepMove)
 
     if (step <= corridorSteps) {
-      const stepWidth = baseCorridorWidth
+      const dynamicWidth = baseCorridorWidth
         + returnVolatility * (isFiveMinute ? 0.45 : isHourly ? 0.38 : 0.3) * Math.sqrt(step)
+      const stepWidth = clamp(dynamicWidth, baseCorridorWidth, isFiveMinute ? 0.03 : isHourly ? 0.05 : 0.08)
       const corridorLower = referencePath * (1 - stepWidth)
       const corridorUpper = referencePath * (1 + stepWidth)
       projection = clamp(projection, corridorLower, corridorUpper)
@@ -767,7 +793,8 @@ export function buildForecast(history, timeframe = 'daily', options = {}) {
     // Keep future steps coherent with corrected projection to prevent snapback drift.
     modelPredictions.forEach((item) => {
       const idx = item.state.length - 1
-      item.state[idx] = Math.max(0.01, projection)
+      const softCorrected = item.value + (projection - item.value) * 0.88
+      item.state[idx] = Math.max(0.01, softCorrected)
     })
 
     const uncertaintyFromVol = lastClose * returnVolatility * Math.sqrt(step) * volatilityScale
@@ -775,6 +802,8 @@ export function buildForecast(history, timeframe = 'daily', options = {}) {
     const uncertainty = Math.max(uncertaintyFromVol, uncertaintyFromResidual)
     const quantileLower = projection * (1 + residualProfile.lowerQuantile * Math.sqrt(step))
     const quantileUpper = projection * (1 + residualProfile.upperQuantile * Math.sqrt(step))
+    const lowerBound = Math.min(projection - uncertainty, quantileLower)
+    const upperBound = Math.max(projection + uncertainty, quantileUpper)
 
     const date = new Date(latestDate)
     if (isFiveMinute) {
@@ -788,8 +817,8 @@ export function buildForecast(history, timeframe = 'daily', options = {}) {
     forecast.push({
       date: date.toISOString(),
       value: Number(projection.toFixed(2)),
-      lower: Number(Math.min(projection - uncertainty, quantileLower).toFixed(2)),
-      upper: Number(Math.max(projection + uncertainty, quantileUpper).toFixed(2)),
+      lower: Number(Math.max(0.01, lowerBound).toFixed(2)),
+      upper: Number(Math.max(Math.max(0.01, lowerBound + 0.01), upperBound).toFixed(2)),
     })
   }
 
