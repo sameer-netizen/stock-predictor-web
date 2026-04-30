@@ -1,0 +1,39 @@
+:root {
+  --text-main: #f6f3ff;
+  --muted: #b7b1d1;
+  --accent-1: #00b4d8;
+  --accent-2: #f4d35e;
+  --bg-1: #05050f;
+  --bg-2: #17173a;
+  --panel: rgba(15, 15, 37, 0.9);
+  font-family: 'Space Grotesk', 'Avenir Next', 'Segoe UI', sans-serif;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  color: var(--text-main);
+  background:
+    radial-gradient(circle at 14% 16%, rgba(0, 180, 216, 0.2), transparent 34%),
+    radial-gradient(circle at 87% 84%, rgba(244, 211, 94, 0.18), transparent 40%),
+    linear-gradient(135deg, var(--bg-1), var(--bg-2));
+  min-height: 100vh;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+h1,
+h2,
+h3 {
+  font-family: 'Sora', 'Avenir Next', 'Segoe UI', sans-serif;
+  letter-spacing: -0.02em;
+}
