@@ -760,6 +760,8 @@ export function buildForecast(history, timeframe = 'daily', options = {}) {
   const calibrationStrength = Math.abs(anchorRatio - 1)
   const shouldCalibratePath = calibrationStrength > 0.002
   const clampedAnchorRatio = clamp(anchorRatio, 0.92, 1.08)
+  const corridorSteps = isFiveMinute ? 12 : isHourly ? 8 : 4
+  const baseCorridorWidth = isFiveMinute ? 0.006 : isHourly ? 0.009 : 0.014
 
   for (let step = 1; step <= steps; step += 1) {
     const modelPredictions = modelSuite.map((model) => {
@@ -780,7 +782,15 @@ export function buildForecast(history, timeframe = 'daily', options = {}) {
     const blendDecay = Math.exp(-Math.log(2) * (step - 1) / blendHalfLife)
     const realtimeBlend = persistentBlendFloor + (persistentBlendBase - persistentBlendFloor) * blendDecay
     const blendedProjection = calibratedRawProjection * (1 - realtimeBlend) + referencePath * realtimeBlend
-    const projection = clamp(blendedProjection, previous - cappedStepMove, previous + cappedStepMove)
+    let projection = clamp(blendedProjection, previous - cappedStepMove, previous + cappedStepMove)
+
+    if (step <= corridorSteps) {
+      const stepWidth = baseCorridorWidth
+        + returnVolatility * (isFiveMinute ? 0.45 : isHourly ? 0.38 : 0.3) * Math.sqrt(step)
+      const corridorLower = referencePath * (1 - stepWidth)
+      const corridorUpper = referencePath * (1 + stepWidth)
+      projection = clamp(projection, corridorLower, corridorUpper)
+    }
 
     const correction = projection - projectionRaw
     if (Math.abs(correction) > 0) {
@@ -837,6 +847,8 @@ export function buildForecast(history, timeframe = 'daily', options = {}) {
     realtimeBlendPercent: persistentBlendBase * 100,
     anchorRatio: clampedAnchorRatio,
     pathCalibrationActive: shouldCalibratePath ? 1 : 0,
+    corridorSteps,
+    corridorWidthPercent: baseCorridorWidth * 100,
   }
 
   return {
