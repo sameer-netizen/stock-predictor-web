@@ -78,10 +78,13 @@ function weightedMetrics(samples) {
   }
 }
 
-export function formatCurrency(amount) {
-  return Number(amount || 0).toLocaleString('en-US', {
+export function formatCurrency(amount, currency = 'USD') {
+  const normalizedCurrency = String(currency || 'USD').toUpperCase() === 'INR' ? 'INR' : 'USD'
+  const locale = normalizedCurrency === 'INR' ? 'en-IN' : 'en-US'
+
+  return Number(amount || 0).toLocaleString(locale, {
     style: 'currency',
-    currency: 'USD',
+    currency: normalizedCurrency,
     maximumFractionDigits: 2,
   })
 }

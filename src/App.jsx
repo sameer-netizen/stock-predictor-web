@@ -188,6 +188,12 @@ function safeMetric(value, suffix = '') {
   return `${Number(value).toFixed(2)}${suffix}`
 }
 
+function resolveCurrencyForSymbol(symbol) {
+  const normalized = String(symbol || '').toUpperCase()
+  if (normalized.endsWith('.NS') || normalized.endsWith('.BO')) return 'INR'
+  return 'USD'
+}
+
 function App() {
   const [symbol, setSymbol] = useState('AAPL')
   const [market, setMarket] = useState('US')
@@ -218,6 +224,9 @@ function App() {
   const staleStartedAtRef = useRef(null)
 
   const activeMarket = useMemo(() => resolveMarketConfig(market), [market])
+  const currencyCode = useMemo(() => resolveCurrencyForSymbol(symbol), [symbol])
+
+  const formatMoney = (value) => formatCurrency(value, currencyCode)
 
   const allSymbols = useMemo(() => {
     return [...new Set([...activeMarket.watchlist, ...customSymbols])]
@@ -589,7 +598,7 @@ function App() {
       <section className="kpi-grid">
         <article className="kpi-card strong">
           <p>Live Price</p>
-          <h2>{loadingQuote || !quote ? '...' : formatCurrency(quote.price)}</h2>
+          <h2>{loadingQuote || !quote ? '...' : formatMoney(quote.price)}</h2>
           <span className={quote?.changePercent >= 0 ? 'up' : 'down'}>
             {quote ? `${formatPercent(quote.changePercent)} today` : 'Waiting for data'}
           </span>
@@ -597,7 +606,7 @@ function App() {
 
         <article className="kpi-card">
           <p>Forecast ({model.horizonLabel})</p>
-          <h2>{model.forecast.at(-1) ? formatCurrency(model.forecast.at(-1).value) : '...'}</h2>
+          <h2>{model.forecast.at(-1) ? formatMoney(model.forecast.at(-1).value) : '...'}</h2>
           <span>{model.signal}</span>
         </article>
 
@@ -808,7 +817,7 @@ function App() {
             value={entryPrice}
             onChange={(event) => setEntryPrice(event.target.value)}
           />
-          <p className="panel-note">7% rule stop-loss: {sevenRule.stopPrice ? formatCurrency(sevenRule.stopPrice) : 'N/A'}</p>
+          <p className="panel-note">7% rule stop-loss: {sevenRule.stopPrice ? formatMoney(sevenRule.stopPrice) : 'N/A'}</p>
           <p className="panel-note">{sevenRule.status}</p>
           <p className="panel-note">{tradingWindowHint}</p>
           <p className="panel-note">Diversification reminder: spread exposure across sectors and market caps.</p>
@@ -849,7 +858,7 @@ function App() {
 
           <div className="metric-grid" style={{ marginBottom: '12px' }}>
             <div><span>Backtest Samples</span><strong>{model.walkForward?.sampleSize || 0}</strong></div>
-            <div><span>Start Equity</span><strong>{formatCurrency(model.walkForward?.startEquity || 10000)}</strong></div>
+            <div><span>Start Equity</span><strong>{formatMoney(model.walkForward?.startEquity || 10000)}</strong></div>
             <div><span>Best Strategy</span><strong>{model.walkForward?.bestModel?.name || 'N/A'}</strong></div>
             <div><span>Best Return</span><strong>{safeMetric(model.walkForward?.bestModel?.totalReturn, '%')}</strong></div>
           </div>
