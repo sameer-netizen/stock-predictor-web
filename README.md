@@ -14,7 +14,7 @@ Realtime stock monitoring website with a built-in 7-day forecast model.
 
 - React + Vite
 - Recharts for visualization
-- Alpha Vantage as stock data provider
+- Yahoo Finance (default, keyless) with optional Alpha Vantage fallback
 - Vercel serverless functions for secure API proxy
 
 ## Setup
@@ -25,7 +25,7 @@ Realtime stock monitoring website with a built-in 7-day forecast model.
 npm install
 ```
 
-2. Create a `.env.local` file:
+2. Optional: create a `.env.local` file for Alpha fallback:
 
 ```bash
 VITE_ALPHA_VANTAGE_API_KEY=your_free_alpha_vantage_key
@@ -48,7 +48,7 @@ npm run build
 1. Push this folder to a new GitHub repository.
 2. Go to Vercel and click New Project.
 3. Import the repository.
-4. Add environment variable:
+4. Optional environment variable (only needed for Alpha fallback):
 
 ```bash
 ALPHA_VANTAGE_API_KEY=your_free_alpha_vantage_key
@@ -69,4 +69,4 @@ Vercel will host:
 ## Important Notes
 
 - This app is for educational use only and is not financial advice.
-- Free Alpha Vantage plans have rate limits. If you hit limits, wait for reset or reduce refresh frequency.
+- Yahoo Finance can also apply upstream rate limits occasionally. If this happens, retry after a short interval.
