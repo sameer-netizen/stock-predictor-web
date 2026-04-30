@@ -88,6 +88,12 @@ h1 {
   border-color: transparent;
 }
 
+.timeframe-btn.alert-on {
+  background: linear-gradient(90deg, #ffd166, #ff9f1c);
+  color: #121212;
+  border-color: transparent;
+}
+
 .symbol-picker {
   display: flex;
   flex-wrap: wrap;
@@ -191,6 +197,28 @@ h1 {
   color: #ff9f9f;
   border-color: rgba(255, 159, 159, 0.35);
   background: rgba(255, 159, 159, 0.12);
+}
+
+.heartbeat-pill.alerting {
+  animation: pulse-alert 1s ease-in-out infinite;
+}
+
+.stale-warning {
+  margin: 8px 0 0;
+  color: #ffb4b4;
+  font-size: 0.82rem;
+}
+
+@keyframes pulse-alert {
+  0% {
+    box-shadow: 0 0 0 0 rgba(255, 120, 120, 0.45);
+  }
+  70% {
+    box-shadow: 0 0 0 10px rgba(255, 120, 120, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(255, 120, 120, 0);
+  }
 }
 
 .panel-grid,

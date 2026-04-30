@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import dayjs from 'dayjs'
 import {
   CartesianGrid,
@@ -42,6 +42,7 @@ const INSIGHTS_POLL_BY_TIMEFRAME = {
   daily: 15 * 60_000,
   hourly: 5 * 60_000,
 }
+const STALE_ALERT_SECONDS = 30
 const CLIENT_ALPHA_KEY = import.meta.env.VITE_ALPHA_VANTAGE_API_KEY
 const SYMBOL_PATTERN = /^[A-Z.-]{1,10}$/
 
@@ -146,6 +147,8 @@ function App() {
   const [error, setError] = useState('')
   const [lastUpdated, setLastUpdated] = useState(null)
   const [nowTick, setNowTick] = useState(Date.now())
+  const [alertsEnabled, setAlertsEnabled] = useState(true)
+  const staleAlertLastTsRef = useRef(0)
 
   const allSymbols = useMemo(() => {
     return [...new Set([...WATCHLIST, ...customSymbols])]
@@ -286,6 +289,40 @@ function App() {
     return { label: `Stale · ${secondsSinceUpdate}s ago`, tone: 'stale' }
   }, [secondsSinceUpdate, timeframe])
 
+  const isStaleForAlert = heartbeatState.tone === 'stale' && (secondsSinceUpdate || 0) >= STALE_ALERT_SECONDS
+
+  useEffect(() => {
+    if (!alertsEnabled || !isStaleForAlert) return
+
+    const now = Date.now()
+    if (now - staleAlertLastTsRef.current < STALE_ALERT_SECONDS * 1000) return
+
+    staleAlertLastTsRef.current = now
+
+    try {
+      const context = new window.AudioContext()
+      const oscillator = context.createOscillator()
+      const gain = context.createGain()
+
+      oscillator.type = 'sine'
+      oscillator.frequency.setValueAtTime(740, context.currentTime)
+      gain.gain.setValueAtTime(0.0001, context.currentTime)
+      gain.gain.exponentialRampToValueAtTime(0.18, context.currentTime + 0.02)
+      gain.gain.exponentialRampToValueAtTime(0.0001, context.currentTime + 0.35)
+
+      oscillator.connect(gain)
+      gain.connect(context.destination)
+      oscillator.start()
+      oscillator.stop(context.currentTime + 0.36)
+
+      oscillator.onended = () => {
+        context.close().catch(() => {})
+      }
+    } catch {
+      // Ignore browser autoplay restrictions for users who disable sound permission.
+    }
+  }, [alertsEnabled, isStaleForAlert, secondsSinceUpdate])
+
   const chartData = useMemo(() => {
     const dateFormat = timeframe === 'daily' ? 'DD MMM' : 'DD MMM HH:mm'
     const actual = history.map((item) => ({
@@ -346,6 +383,13 @@ function App() {
                 {item.label}
               </button>
             ))}
+            <button
+              type="button"
+              className={alertsEnabled ? 'timeframe-btn alert-on' : 'timeframe-btn'}
+              onClick={() => setAlertsEnabled((prev) => !prev)}
+            >
+              Alerts: {alertsEnabled ? 'On' : 'Off'}
+            </button>
           </div>
           {symbolError && <p className="symbol-error">{symbolError}</p>}
 
@@ -395,9 +439,14 @@ function App() {
       </section>
 
       <section className="heartbeat-row">
-        <p className={`heartbeat-pill ${heartbeatState.tone}`}>
+        <p className={`heartbeat-pill ${heartbeatState.tone} ${isStaleForAlert ? 'alerting' : ''}`}>
           Feed Health: {heartbeatState.label}
         </p>
+        {isStaleForAlert && (
+          <p className="stale-warning">
+            Warning: feed is stale for {secondsSinceUpdate}s. Retry network or switch timeframe.
+          </p>
+        )}
       </section>
 
       <section className="panel-grid">
