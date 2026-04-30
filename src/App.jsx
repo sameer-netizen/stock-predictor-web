@@ -145,6 +145,7 @@ function App() {
   const [loadingInsights, setLoadingInsights] = useState(true)
   const [error, setError] = useState('')
   const [lastUpdated, setLastUpdated] = useState(null)
+  const [nowTick, setNowTick] = useState(Date.now())
 
   const allSymbols = useMemo(() => {
     return [...new Set([...WATCHLIST, ...customSymbols])]
@@ -195,6 +196,14 @@ function App() {
       clearInterval(timer)
     }
   }, [symbol, timeframe])
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setNowTick(Date.now())
+    }, 1000)
+
+    return () => clearInterval(timer)
+  }, [])
 
   useEffect(() => {
     let isMounted = true
@@ -259,6 +268,23 @@ function App() {
   const technical = useMemo(() => buildTechnicalSnapshot(history), [history])
   const tradingWindowHint = useMemo(() => getTradingWindowHint(), [])
   const sevenRule = useMemo(() => calculateSevenPercentRule(entryPrice, quote?.price), [entryPrice, quote])
+  const secondsSinceUpdate = useMemo(() => {
+    if (!lastUpdated) return null
+    return Math.max(0, Math.floor((nowTick - new Date(lastUpdated).getTime()) / 1000))
+  }, [lastUpdated, nowTick])
+
+  const heartbeatState = useMemo(() => {
+    if (secondsSinceUpdate === null) return { label: 'Waiting for first tick', tone: 'warn' }
+    const pollMs = QUOTE_POLL_BY_TIMEFRAME[timeframe] || 60_000
+    const staleAfter = Math.round((pollMs * 2.5) / 1000)
+    if (secondsSinceUpdate <= Math.round(pollMs / 1000)) {
+      return { label: `Live · ${secondsSinceUpdate}s ago`, tone: 'live' }
+    }
+    if (secondsSinceUpdate <= staleAfter) {
+      return { label: `Lagging · ${secondsSinceUpdate}s ago`, tone: 'warn' }
+    }
+    return { label: `Stale · ${secondsSinceUpdate}s ago`, tone: 'stale' }
+  }, [secondsSinceUpdate, timeframe])
 
   const chartData = useMemo(() => {
     const dateFormat = timeframe === 'daily' ? 'DD MMM' : 'DD MMM HH:mm'
@@ -366,6 +392,12 @@ function App() {
           <h2>{loadingInsights ? '...' : insights.sentiment.label}</h2>
           <span>{insights.sentiment.details}</span>
         </article>
+      </section>
+
+      <section className="heartbeat-row">
+        <p className={`heartbeat-pill ${heartbeatState.tone}`}>
+          Feed Health: {heartbeatState.label}
+        </p>
       </section>
 
       <section className="panel-grid">

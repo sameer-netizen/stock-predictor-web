@@ -6,6 +6,7 @@ Realtime stock monitoring website with a built-in 7-day forecast model.
 
 - Near realtime quote refresh every 60 seconds
 - Multi-timeframe monitoring: 5m, Daily, and Hourly modes
+- Live feed heartbeat indicator (live/lagging/stale)
 - Watchlist switching (AAPL, MSFT, NVDA, GOOGL, AMZN, TSLA)
 - Custom ticker search (load any valid symbol)
 - Historical chart + forecast overlay with confidence band
