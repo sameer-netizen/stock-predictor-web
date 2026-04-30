@@ -756,6 +756,10 @@ export function buildForecast(history, timeframe = 'daily', options = {}) {
   const persistentBlendBase = isFiveMinute ? 0.72 : isHourly ? 0.58 : 0.4
   const persistentBlendFloor = isFiveMinute ? 0.18 : isHourly ? 0.12 : 0.08
   const blendHalfLife = isFiveMinute ? 12 : isHourly ? 8 : 4
+  const anchorRatio = lastClose > 0 ? realtimeReference / lastClose : 1
+  const calibrationStrength = Math.abs(anchorRatio - 1)
+  const shouldCalibratePath = calibrationStrength > 0.002
+  const clampedAnchorRatio = clamp(anchorRatio, 0.92, 1.08)
 
   for (let step = 1; step <= steps; step += 1) {
     const modelPredictions = modelSuite.map((model) => {
@@ -766,13 +770,16 @@ export function buildForecast(history, timeframe = 'daily', options = {}) {
     })
 
     const projectionRaw = modelPredictions.reduce((sum, item) => sum + item.value * item.weight, 0)
+    const calibratedRawProjection = shouldCalibratePath
+      ? projectionRaw * (1 + (clampedAnchorRatio - 1) * Math.exp(-(step - 1) / (isFiveMinute ? 20 : isHourly ? 14 : 8)))
+      : projectionRaw
     const previous = step === 1 ? lastClose : forecast.at(-1)?.value || lastClose
     const cappedStepMove = Math.max(previous * 0.18, lastClose * 0.1)
 
     const referencePath = realtimeReference * (1 + intradayLiveDrift * Math.min(step, 4) * (isFiveMinute ? 0.55 : isHourly ? 0.4 : 0.22))
     const blendDecay = Math.exp(-Math.log(2) * (step - 1) / blendHalfLife)
     const realtimeBlend = persistentBlendFloor + (persistentBlendBase - persistentBlendFloor) * blendDecay
-    const blendedProjection = projectionRaw * (1 - realtimeBlend) + referencePath * realtimeBlend
+    const blendedProjection = calibratedRawProjection * (1 - realtimeBlend) + referencePath * realtimeBlend
     const projection = clamp(blendedProjection, previous - cappedStepMove, previous + cappedStepMove)
 
     const correction = projection - projectionRaw
@@ -828,6 +835,8 @@ export function buildForecast(history, timeframe = 'daily', options = {}) {
     residualSigma: residualProfile.residualSigma * 100,
     liveAnchorGapPercent: liveAnchor.anchorGapPercent,
     realtimeBlendPercent: persistentBlendBase * 100,
+    anchorRatio: clampedAnchorRatio,
+    pathCalibrationActive: shouldCalibratePath ? 1 : 0,
   }
 
   return {
